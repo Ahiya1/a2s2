@@ -1,7 +1,7 @@
 {
   "name": "a2s2",
   "version": "0.1.0",
-  "description": "Autonomous Agent System v2 - Phase 1A Foundation Tools",
+  "description": "Autonomous Agent System v2 - Phase 1B Claude Integration",
   "bin": {
     "a2s2": "./bin/a2s2.js"
   },
@@ -12,15 +12,18 @@
     "test:watch": "vitest watch"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.60.0",
+    "anthropic": "^0.0.0",
+    "axios": "^1.5.0",
     "commander": "^11.0.0",
-    "zod": "^3.22.0",
+    "fs-extra": "^11.1.0",
     "winston": "^3.10.0",
-    "fs-extra": "^11.1.0"
+    "zod": "^3.22.0"
   },
   "devDependencies": {
-    "typescript": "^5.1.0",
-    "vitest": "^1.6.0",
+    "@types/fs-extra": "^11.0.0",
     "@types/node": "^20.4.0",
-    "@types/fs-extra": "^11.0.0"
+    "typescript": "^5.1.0",
+    "vitest": "^1.6.0"
   }
 }
