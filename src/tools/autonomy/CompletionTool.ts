@@ -14,7 +14,7 @@ export interface CompletionReport {
   nextSteps?: string[];
 }
 
-// FIXED: Made arrays optional but with default values to handle null inputs
+// FIXED: Enhanced transform to handle null inputs properly
 const CompletionSchema = z
   .object({
     summary: z.string().min(10, "Summary must be at least 10 characters"),
@@ -26,18 +26,21 @@ const CompletionSchema = z
     nextSteps: z.array(z.string()).optional().default([]),
   })
   .transform((data) => {
-    // FIXED: Ensure null arrays are converted to empty arrays
+    // FIXED: Comprehensive null/undefined array handling
+    const safeArray = (value: unknown): string[] => {
+      if (Array.isArray(value)) {
+        return value.filter((item) => typeof item === "string");
+      }
+      return [];
+    };
+
     return {
       ...data,
-      filesCreated: Array.isArray(data.filesCreated) ? data.filesCreated : [],
-      filesModified: Array.isArray(data.filesModified)
-        ? data.filesModified
-        : [],
-      testsRun: Array.isArray(data.testsRun) ? data.testsRun : [],
-      validationResults: Array.isArray(data.validationResults)
-        ? data.validationResults
-        : [],
-      nextSteps: Array.isArray(data.nextSteps) ? data.nextSteps : [],
+      filesCreated: safeArray(data.filesCreated),
+      filesModified: safeArray(data.filesModified),
+      testsRun: safeArray(data.testsRun),
+      validationResults: safeArray(data.validationResults),
+      nextSteps: safeArray(data.nextSteps),
     };
   });
 

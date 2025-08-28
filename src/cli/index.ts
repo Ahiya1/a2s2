@@ -12,7 +12,8 @@ import { Logger } from "../logging/Logger";
 
 export function createCLI(): Command {
   // Load environment variables from multiple possible locations
-  EnvLoader.loadEnvironment();
+  // FIXED: Changed from loadEnvironment() to load()
+  EnvLoader.load();
 
   // Load configuration from environment
   ConfigManager.loadFromEnv();

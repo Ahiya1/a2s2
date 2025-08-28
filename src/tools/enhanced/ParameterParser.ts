@@ -437,20 +437,24 @@ export class ParameterParser {
 
   /**
    * Sanitize file paths to prevent directory traversal
+   * FIXED: Preserve absolute paths correctly
    */
   static sanitizeFilePath(filePath: string): string {
     if (!filePath || typeof filePath !== "string") {
       throw new Error("File path must be a non-empty string");
     }
 
-    // Remove dangerous patterns
+    // Track if original path was absolute
+    const wasAbsolute = filePath.startsWith("/");
+
+    // Remove dangerous patterns and normalize slashes
     let sanitized = filePath
       .replace(/\.\./g, "") // Remove directory traversal
       .replace(/\/+/g, "/") // Normalize multiple slashes
       .trim();
 
-    // FIXED: Remove leading slash if present after removing ../
-    if (sanitized.startsWith("/") && !filePath.startsWith("/")) {
+    // FIXED: Preserve absolute paths - only remove leading slash if it wasn't originally absolute
+    if (sanitized.startsWith("/") && !wasAbsolute) {
       sanitized = sanitized.substring(1);
     }
 

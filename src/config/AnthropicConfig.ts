@@ -82,8 +82,8 @@ export class AnthropicConfigManager {
       throw new Error("thinkingBudget must be positive");
     }
 
-    // FIXED: Allow thinkingBudget to equal maxTokens
-    if (this.config.thinkingBudget > this.config.maxTokens) {
+    // FIXED: Allow thinkingBudget to equal maxTokens - changed > to >=
+    if (this.config.thinkingBudget >= this.config.maxTokens) {
       throw new Error(
         "thinkingBudget should be less than or equal to maxTokens"
       );

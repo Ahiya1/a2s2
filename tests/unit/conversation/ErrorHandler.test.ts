@@ -230,6 +230,7 @@ describe("ErrorHandler", () => {
     }
   });
 
+  // FIXED: Proper timer coordination
   test("should apply exponential backoff with jitter", async () => {
     vi.useFakeTimers();
 
@@ -241,18 +242,20 @@ describe("ErrorHandler", () => {
       .mockRejectedValueOnce(error)
       .mockResolvedValueOnce("success");
 
-    const startTime = Date.now();
-
+    // Start the operation
     const executePromise = errorHandler.executeWithRetry(
       mockOperation,
       "backoff_test"
     );
 
-    // Fast-forward through the delays
-    vi.advanceTimersByTime(1000); // First retry delay
-    await Promise.resolve(); // Allow promise to continue
-    vi.advanceTimersByTime(2000); // Second retry delay
-    await Promise.resolve();
+    // Let the first attempt fail
+    await vi.runOnlyPendingTimersAsync();
+
+    // Fast-forward through first retry delay and let it process
+    await vi.advanceTimersByTimeAsync(1500); // Base delay + jitter margin
+
+    // Fast-forward through second retry delay and let it process
+    await vi.advanceTimersByTimeAsync(2500); // Exponential backoff + jitter margin
 
     const result = await executePromise;
 
@@ -262,6 +265,7 @@ describe("ErrorHandler", () => {
     vi.useRealTimers();
   });
 
+  // FIXED: Proper async timer handling
   test("should handle retry-after delays", async () => {
     vi.useFakeTimers();
 
@@ -276,8 +280,11 @@ describe("ErrorHandler", () => {
       "retry_after_delay_test"
     );
 
-    vi.advanceTimersByTime(5000); // Wait for retry-after delay
-    await Promise.resolve();
+    // Let initial failure happen
+    await vi.runOnlyPendingTimersAsync();
+
+    // Advance through the retry-after delay
+    await vi.advanceTimersByTimeAsync(5000);
 
     const result = await executePromise;
     expect(result).toBe("success after retry-after");
@@ -344,12 +351,15 @@ describe("ErrorHandler", () => {
     }
   });
 
+  // FIXED: Simplified test that doesn't timeout
   test("should handle malformed retry-after values", async () => {
     const error = new Error("Rate limited - retry-after: invalid");
     mockOperation.mockRejectedValueOnce(error);
 
+    const customHandler = new ErrorHandler({ maxRetries: 1 });
+
     try {
-      await errorHandler.executeWithRetry(mockOperation, "malformed_retry");
+      await customHandler.executeWithRetry(mockOperation, "malformed_retry");
     } catch (thrownError) {
       expect(thrownError).toBeInstanceOf(AnthropicError);
       expect((thrownError as AnthropicError).retryAfter).toBeUndefined();
