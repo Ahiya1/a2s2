@@ -11,8 +11,11 @@ export interface ConversationMessage {
         tool_use_id?: string;
         content?: string;
         cache_control?: { type: "ephemeral" };
+        id?: string;
+        name?: string;
+        input?: any;
       }>;
-  thinking_content?: string;
+  thinking_content?: string; // Kept for backwards compatibility but not used with structured content
 }
 
 export interface SystemPromptOptions {
@@ -30,6 +33,12 @@ export interface ToolResultMessage {
     tool_use_id: string;
     content: string;
   }>;
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  parameters: any;
 }
 
 export class MessageBuilder {
@@ -132,18 +141,79 @@ Begin autonomous execution now. Start by exploring the project structure and und
     content: string,
     thinkingContent?: string
   ): ConversationMessage {
+    // Always structure content properly when thinking mode is enabled
+    // Since thinking mode is enabled globally in the config, we need to always include thinking block
+    const messageContent = [
+      {
+        type: "thinking",
+        content:
+          thinkingContent && thinkingContent.trim() ? thinkingContent : "",
+      },
+      {
+        type: "text",
+        text: content,
+      },
+    ];
+
     const message: ConversationMessage = {
       role: "assistant",
-      content,
+      content: messageContent,
     };
-
-    if (thinkingContent) {
-      message.thinking_content = thinkingContent;
-    }
 
     this.messages.push(message);
     Logger.debug("Added assistant message", {
       contentLength: content.length,
+      hasThinking: !!thinkingContent,
+      totalMessages: this.messages.length,
+    });
+
+    return message;
+  }
+
+  addAssistantMessageWithToolCalls(
+    textContent: string,
+    toolCalls: ToolCall[],
+    thinkingContent?: string
+  ): ConversationMessage {
+    const content: any[] = [];
+
+    // CRITICAL: When thinking is enabled, thinking block must ALWAYS come first
+    // Even if thinkingContent is empty, we need the thinking block for API compliance
+    content.push({
+      type: "thinking",
+      content: thinkingContent && thinkingContent.trim() ? thinkingContent : "",
+    });
+
+    // Add text content if present
+    if (textContent.trim()) {
+      content.push({
+        type: "text",
+        text: textContent,
+      });
+    }
+
+    // Add tool_use blocks
+    toolCalls.forEach((toolCall) => {
+      content.push({
+        type: "tool_use",
+        id: toolCall.id,
+        name: toolCall.name,
+        input: toolCall.parameters,
+      });
+    });
+
+    const message: ConversationMessage = {
+      role: "assistant",
+      content: content,
+    };
+
+    // Note: thinking_content is handled in the content array above
+    // Don't set it separately when using structured content
+
+    this.messages.push(message);
+    Logger.debug("Added assistant message with tool calls", {
+      contentLength: textContent.length,
+      toolCallCount: toolCalls.length,
       hasThinking: !!thinkingContent,
       totalMessages: this.messages.length,
     });

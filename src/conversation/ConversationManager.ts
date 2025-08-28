@@ -149,11 +149,19 @@ export class ConversationManager {
             stopReason: lastResponse.stopReason,
           });
 
-          // Add assistant response to conversation
-          this.messageBuilder.addAssistantMessage(
-            lastResponse.textContent,
-            lastResponse.thinkingContent
-          );
+          // FIXED: Add assistant response to conversation properly with tool calls
+          if (lastResponse.toolCalls.length > 0) {
+            this.messageBuilder.addAssistantMessageWithToolCalls(
+              lastResponse.textContent,
+              lastResponse.toolCalls,
+              lastResponse.thinkingContent
+            );
+          } else {
+            this.messageBuilder.addAssistantMessage(
+              lastResponse.textContent,
+              lastResponse.thinkingContent
+            );
+          }
 
           // Check for completion
           if (ResponseParser.isComplete(response)) {

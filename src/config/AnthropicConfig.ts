@@ -1,3 +1,5 @@
+import { EnvLoader } from "./EnvLoader";
+
 export interface AnthropicConfig {
   apiKey: string;
   model: string;
@@ -10,24 +12,74 @@ export interface AnthropicConfig {
   enableWebSearch: boolean;
 }
 
-export const DEFAULT_ANTHROPIC_CONFIG: AnthropicConfig = {
-  apiKey: process.env.ANTHROPIC_API_KEY || "",
-  model: "claude-sonnet-4-20250514",
-  maxTokens: 16000,
-  thinkingBudget: 10000,
-  maxRetries: 5,
-  baseRetryDelay: 1000,
-  enableExtendedContext: false, // 1M context window - requires tier 4+
-  enableInterleaved: true, // Interleaved thinking beta
-  enableWebSearch: true, // Native web search integration
-};
-
 export class AnthropicConfigManager {
   private config: AnthropicConfig;
 
-  constructor(config?: Partial<AnthropicConfig>) {
-    this.config = { ...DEFAULT_ANTHROPIC_CONFIG, ...config };
+  constructor(customConfig: Partial<AnthropicConfig> = {}) {
+    // Load environment variables
+    EnvLoader.load();
+
+    // Build default configuration
+    const defaultConfig: AnthropicConfig = {
+      apiKey: process.env.ANTHROPIC_API_KEY || "",
+      model: "claude-sonnet-4-20250514",
+      maxTokens: 16000,
+      thinkingBudget: 10000,
+      maxRetries: 3,
+      baseRetryDelay: 1000,
+      enableExtendedContext: false,
+      enableInterleaved: true,
+      enableWebSearch: true,
+    };
+
+    // Merge with custom configuration
+    this.config = { ...defaultConfig, ...customConfig };
+
+    // Validate the configuration
     this.validateConfig();
+  }
+
+  private validateConfig(): void {
+    if (!this.config.apiKey && process.env.NODE_ENV !== "test") {
+      throw new Error(
+        "ANTHROPIC_API_KEY is required. Set it in your environment or .a2s2.env file."
+      );
+    }
+
+    if (this.config.maxTokens < 1000 || this.config.maxTokens > 200000) {
+      throw new Error("maxTokens must be between 1,000 and 200,000");
+    }
+
+    if (this.config.thinkingBudget < 0) {
+      throw new Error("thinkingBudget must be non-negative");
+    }
+
+    // FIXED: Allow thinkingBudget to equal maxTokens (was incorrectly rejecting equal values)
+    if (this.config.thinkingBudget > this.config.maxTokens) {
+      throw new Error(
+        "thinkingBudget should be less than or equal to maxTokens"
+      );
+    }
+
+    if (this.config.maxRetries < 0 || this.config.maxRetries > 10) {
+      throw new Error("maxRetries must be between 0 and 10");
+    }
+
+    if (
+      this.config.baseRetryDelay < 100 ||
+      this.config.baseRetryDelay > 10000
+    ) {
+      throw new Error("baseRetryDelay must be between 100ms and 10,000ms");
+    }
+
+    if (
+      !this.config.model.includes("claude") ||
+      !this.config.model.includes("4")
+    ) {
+      console.warn(
+        `Warning: Using non-Claude 4 model (${this.config.model}). a2s2 is optimized for Claude 4 Sonnet.`
+      );
+    }
   }
 
   getConfig(): AnthropicConfig {
@@ -37,6 +89,17 @@ export class AnthropicConfigManager {
   updateConfig(updates: Partial<AnthropicConfig>): void {
     this.config = { ...this.config, ...updates };
     this.validateConfig();
+  }
+
+  getRequestConfig() {
+    return {
+      model: this.config.model,
+      max_tokens: this.config.maxTokens,
+      thinking: {
+        type: "enabled" as const,
+        budget_tokens: this.config.thinkingBudget,
+      },
+    };
   }
 
   getBetaHeaders(): string[] {
@@ -53,40 +116,81 @@ export class AnthropicConfigManager {
     return headers;
   }
 
-  getRequestConfig() {
+  // Cost calculation helpers
+  getInputTokenCost(tokenCount: number): number {
+    const baseRate =
+      this.config.enableExtendedContext && tokenCount > 200000
+        ? 0.000006 // $6/M for >200K tokens with extended context
+        : 0.000003; // $3/M for ≤200K tokens
+
+    return tokenCount * baseRate;
+  }
+
+  getOutputTokenCost(tokenCount: number): number {
+    const baseRate =
+      this.config.enableExtendedContext && tokenCount > 200000
+        ? 0.0000225 // $22.50/M for >200K tokens with extended context
+        : 0.000015; // $15/M for ≤200K tokens
+
+    return tokenCount * baseRate;
+  }
+
+  getThinkingTokenCost(tokenCount: number): number {
+    // Thinking tokens are typically charged at the same rate as input tokens
+    return this.getInputTokenCost(tokenCount);
+  }
+
+  // Configuration validation utilities
+  static validateApiKey(apiKey: string): boolean {
+    return (
+      typeof apiKey === "string" &&
+      apiKey.startsWith("sk-ant-") &&
+      apiKey.length > 20
+    );
+  }
+
+  static getRecommendedConfig(): Partial<AnthropicConfig> {
     return {
-      model: this.config.model,
-      max_tokens: this.config.maxTokens,
-      thinking: {
-        type: "enabled" as const,
-        budget_tokens: this.config.thinkingBudget,
-      },
-      betas: this.getBetaHeaders(),
+      model: "claude-sonnet-4-20250514",
+      maxTokens: 16000,
+      thinkingBudget: 10000,
+      maxRetries: 3,
+      baseRetryDelay: 1000,
+      enableExtendedContext: false, // Expensive, enable only when needed
+      enableInterleaved: true, // Recommended for autonomous agents
+      enableWebSearch: true, // Useful for current information
     };
   }
 
-  private validateConfig(): void {
-    if (!this.config.apiKey) {
-      throw new Error("ANTHROPIC_API_KEY environment variable is required");
-    }
+  // Debug and status methods
+  getConfigSummary(): {
+    model: string;
+    maxTokens: number;
+    extendedContext: boolean;
+    interleaved: boolean;
+    webSearch: boolean;
+    estimatedCostPer1KTokens: string;
+  } {
+    const inputCost = this.getInputTokenCost(1000);
+    const outputCost = this.getOutputTokenCost(1000);
+    const avgCost = (inputCost + outputCost) / 2;
 
-    if (!this.config.apiKey.startsWith("sk-ant-")) {
-      throw new Error("Invalid Anthropic API key format");
-    }
+    return {
+      model: this.config.model,
+      maxTokens: this.config.maxTokens,
+      extendedContext: this.config.enableExtendedContext,
+      interleaved: this.config.enableInterleaved,
+      webSearch: this.config.enableWebSearch,
+      estimatedCostPer1KTokens: `$${avgCost.toFixed(6)}`,
+    };
+  }
 
-    if (this.config.maxTokens <= 0) {
-      throw new Error("maxTokens must be positive");
-    }
-
-    if (this.config.thinkingBudget <= 0) {
-      throw new Error("thinkingBudget must be positive");
-    }
-
-    // FIXED: Allow thinkingBudget to equal maxTokens (was rejecting equal values)
-    if (this.config.thinkingBudget >= this.config.maxTokens) {
-      throw new Error(
-        "thinkingBudget should be less than or equal to maxTokens"
-      );
-    }
+  isProductionReady(): boolean {
+    return (
+      this.config.apiKey !== "" &&
+      AnthropicConfigManager.validateApiKey(this.config.apiKey) &&
+      this.config.maxTokens >= 4000 &&
+      this.config.thinkingBudget >= 1000
+    );
   }
 }

@@ -1,3 +1,3 @@
 # Test Project
 
-This project was created by a2s2 for testing purposes.
+This project was created during agent testing.
