@@ -11,51 +11,58 @@ import { Tool } from "../../src/tools/ToolManager";
 
 const MOCK_API = true; // Set to false for real API testing
 
+// FIXED: Global mock setup that properly tracks calls
+let mockCreate: ReturnType<typeof vi.fn>;
+
 if (MOCK_API) {
-  vi.mock("@anthropic-ai/sdk", () => ({
-    default: vi.fn().mockImplementation(() => ({
-      beta: {
-        messages: {
-          create: vi.fn().mockImplementation(async (request) => {
-            // Simulate realistic API responses
-            await new Promise((resolve) => setTimeout(resolve, 100)); // Simulate latency
+  vi.mock("@anthropic-ai/sdk", () => {
+    mockCreate = vi.fn().mockImplementation(async (request) => {
+      // Simulate realistic API responses
+      await new Promise((resolve) => setTimeout(resolve, 100)); // Simulate latency
 
-            // FIXED: Use the actual tool name from the request instead of defaulting
-            const toolName =
-              request.tools && request.tools.length > 0
-                ? request.tools[0].name
-                : "test_tool";
+      // Return tool use that matches the first available tool
+      const toolName =
+        request.tools && request.tools.length > 0
+          ? request.tools[0].name
+          : "test_tool";
 
-            return {
-              content: [
-                {
-                  type: "thinking",
-                  content:
-                    "I need to help the user with their request. Let me think about the best approach...",
-                },
-                {
-                  type: "text",
-                  text: "I'll help you with that request. Let me use the appropriate tools.",
-                },
-                {
-                  type: "tool_use",
-                  id: `tool_${Date.now()}`,
-                  name: toolName, // FIXED: Use actual tool name
-                  input: { test: "parameter" },
-                },
-              ],
-              stop_reason: "tool_use",
-              usage: {
-                input_tokens: Math.floor(Math.random() * 1000) + 500,
-                output_tokens: Math.floor(Math.random() * 200) + 100,
-                thinking_tokens: Math.floor(Math.random() * 100) + 50,
-              },
-            };
-          }),
+      return {
+        content: [
+          {
+            type: "thinking",
+            content:
+              "I need to help the user with their request. Let me think about the best approach...",
+          },
+          {
+            type: "text",
+            text: "I'll help you with that request. Let me use the appropriate tools.",
+          },
+          {
+            type: "tool_use",
+            id: `tool_${Date.now()}`,
+            name: toolName, // Use actual tool name from request
+            input: { test: "parameter" },
+          },
+        ],
+        stop_reason: "tool_use",
+        usage: {
+          input_tokens: Math.floor(Math.random() * 1000) + 500,
+          output_tokens: Math.floor(Math.random() * 200) + 100,
+          thinking_tokens: Math.floor(Math.random() * 100) + 50,
         },
-      },
-    })),
-  }));
+      };
+    });
+
+    return {
+      default: vi.fn().mockImplementation(() => ({
+        beta: {
+          messages: {
+            create: mockCreate,
+          },
+        },
+      })),
+    };
+  });
 }
 
 describe("Claude API Integration", () => {
@@ -96,6 +103,11 @@ describe("Claude API Integration", () => {
         execute: vi.fn().mockResolvedValue("Data processed successfully"),
       },
     ];
+
+    // FIXED: Clear mock call history before each test
+    if (MOCK_API && mockCreate) {
+      mockCreate.mockClear();
+    }
   });
 
   afterEach(() => {
@@ -221,10 +233,6 @@ describe("Claude API Integration", () => {
   test("should handle API rate limiting gracefully", async () => {
     // Temporarily mock a rate limit error
     if (MOCK_API) {
-      const { default: Anthropic } = await import("@anthropic-ai/sdk");
-      const mockCreate =
-        vi.mocked(Anthropic).mock.results[0].value.beta.messages.create;
-
       mockCreate.mockRejectedValueOnce(new Error("429 rate limit exceeded"));
       mockCreate.mockResolvedValueOnce({
         content: [{ type: "text", text: "Success after retry" }],
@@ -265,6 +273,9 @@ describe("Claude API Integration", () => {
   });
 
   test("should properly format tools for Claude API", async () => {
+    // FIXED: Create a fresh conversation manager and use a specific tool
+    const freshConversationManager = new ConversationManager();
+
     const complexTool: Tool = {
       name: "complex_analysis",
       description: "Perform complex data analysis with multiple parameters",
@@ -294,20 +305,24 @@ describe("Claude API Integration", () => {
 
     const prompt = "Please perform a statistical analysis on my data";
 
-    const result = await conversationManager.executeWithTools(
+    // FIXED: Ensure mock is clean and properly tracks this specific call
+    if (MOCK_API) {
+      mockCreate.mockClear();
+    }
+
+    const result = await freshConversationManager.executeWithTools(
       prompt,
-      [complexTool],
-      { maxIterations: 2 }
+      [complexTool], // Only pass the complex tool
+      { maxIterations: 1 }
     );
 
     if (MOCK_API) {
-      // Verify the tool was formatted correctly for the API
-      const { default: Anthropic } = await import("@anthropic-ai/sdk");
-      const mockCreate =
-        vi.mocked(Anthropic).mock.results[0].value.beta.messages.create;
+      // FIXED: Verify the tool was formatted correctly for the API
+      expect(mockCreate).toHaveBeenCalled();
       const lastCall = mockCreate.mock.calls[mockCreate.mock.calls.length - 1];
 
       expect(lastCall[0]).toHaveProperty("tools");
+      expect(lastCall[0].tools).toHaveLength(1);
       expect(lastCall[0].tools[0]).toMatchObject({
         name: "complex_analysis",
         description: "Perform complex data analysis with multiple parameters",

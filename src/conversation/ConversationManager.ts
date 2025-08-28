@@ -104,6 +104,26 @@ export class ConversationManager {
         );
 
         try {
+          // FIXED: Check cost budget BEFORE making request to prevent overruns
+          if (options.costBudget && totalCost >= options.costBudget) {
+            Logger.warn("Cost budget exceeded before iteration", {
+              conversationId: this.conversationId,
+              totalCost: totalCost.toFixed(4),
+              budget: options.costBudget,
+            });
+
+            return {
+              success: false,
+              error: new AnthropicError(
+                "budget_exceeded",
+                `Cost budget of $${options.costBudget} exceeded (actual: $${totalCost.toFixed(4)})`
+              ),
+              iterationCount,
+              totalCost,
+              conversationId: this.conversationId,
+            };
+          }
+
           // Make API request with error handling
           const response = await this.errorHandler.executeWithRetry(
             () => this.makeClaudeRequest(tools, options),
@@ -134,26 +154,6 @@ export class ConversationManager {
             lastResponse.textContent,
             lastResponse.thinkingContent
           );
-
-          // FIXED: Check cost budget BEFORE tool execution to prevent overruns
-          if (options.costBudget && totalCost > options.costBudget) {
-            Logger.warn("Cost budget exceeded", {
-              conversationId: this.conversationId,
-              totalCost: totalCost.toFixed(4),
-              budget: options.costBudget,
-            });
-
-            return {
-              success: false,
-              error: new AnthropicError(
-                "budget_exceeded",
-                `Cost budget of $${options.costBudget} exceeded (actual: $${totalCost.toFixed(4)})`
-              ),
-              iterationCount,
-              totalCost,
-              conversationId: this.conversationId,
-            };
-          }
 
           // Check for completion
           if (ResponseParser.isComplete(response)) {
@@ -205,7 +205,7 @@ export class ConversationManager {
           // Context management
           this.messageBuilder.pruneContextIfNeeded(180000);
         } catch (error) {
-          // FIXED: Better error handling - catch and classify errors properly
+          // Better error handling - catch and classify errors properly
           const anthropicError =
             error instanceof AnthropicError
               ? error
@@ -338,7 +338,7 @@ export class ConversationManager {
 
     const results: ToolExecutionResult[] = [];
 
-    // FIXED: Execute tool calls in parallel for efficiency
+    // Execute tool calls in parallel for efficiency
     const executionPromises = toolCalls.map(
       async (toolCall): Promise<ToolExecutionResult> => {
         const tool = tools.find((t) => (t.name || "") === toolCall.name);

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Autonomous Agent System v2 - Phase 1B Claude Integration",
   "bin": {
-    "a2s2": "./bin/a2s.js"
+    "a2s2": "./bin/a2s2.js"
   },
   "scripts": {
     "build": "tsc",
