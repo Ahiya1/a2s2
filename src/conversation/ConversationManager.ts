@@ -10,7 +10,7 @@ import {
   ParsedResponse,
   ToolCall,
   ThinkingBlock,
-} from "./ResponseParser"; // UPDATED: Added ThinkingBlock import
+} from "./ResponseParser";
 import { CostOptimizer, TokenUsage, CostCalculation } from "./CostOptimizer";
 import { Tool } from "../tools/ToolManager";
 import { Logger } from "../logging/Logger";
@@ -108,28 +108,28 @@ export class ConversationManager {
           }
         );
 
+        // Check cost budget BEFORE making request to prevent overruns
+        if (options.costBudget && totalCost >= options.costBudget) {
+          Logger.warn("Cost budget exceeded before iteration", {
+            conversationId: this.conversationId,
+            totalCost: totalCost.toFixed(4),
+            budget: options.costBudget,
+          });
+
+          return {
+            success: false,
+            error: new AnthropicError(
+              "budget_exceeded",
+              `Cost budget of $${options.costBudget} exceeded (actual: $${totalCost.toFixed(4)})`
+            ),
+            iterationCount,
+            totalCost,
+            conversationId: this.conversationId,
+          };
+        }
+
         try {
-          // FIXED: Check cost budget BEFORE making request to prevent overruns
-          if (options.costBudget && totalCost >= options.costBudget) {
-            Logger.warn("Cost budget exceeded before iteration", {
-              conversationId: this.conversationId,
-              totalCost: totalCost.toFixed(4),
-              budget: options.costBudget,
-            });
-
-            return {
-              success: false,
-              error: new AnthropicError(
-                "budget_exceeded",
-                `Cost budget of $${options.costBudget} exceeded (actual: $${totalCost.toFixed(4)})`
-              ),
-              iterationCount,
-              totalCost,
-              conversationId: this.conversationId,
-            };
-          }
-
-          // Make API request with error handling
+          // FIXED: Make API request with error handling - ErrorHandler handles all retries internally
           const response = await this.errorHandler.executeWithRetry(
             () => this.makeClaudeRequest(tools, options),
             `claude_request_${iterationCount}`,
@@ -154,19 +154,17 @@ export class ConversationManager {
             stopReason: lastResponse.stopReason,
           });
 
-          // FIXED: Add assistant response to conversation properly with preserved thinking blocks
+          // Add assistant response to conversation properly with preserved thinking blocks
           if (lastResponse.toolCalls.length > 0) {
-            // Use the new method with preserved thinking blocks
             this.messageBuilder.addAssistantMessageWithPreservedThinking(
               lastResponse.textContent,
-              lastResponse.thinkingBlocks, // Use preserved blocks with signatures
+              lastResponse.thinkingBlocks,
               lastResponse.toolCalls
             );
           } else {
-            // For responses without tool calls, still use preserved thinking blocks
             this.messageBuilder.addAssistantMessageWithPreservedThinking(
               lastResponse.textContent,
-              lastResponse.thinkingBlocks, // Use preserved blocks with signatures
+              lastResponse.thinkingBlocks,
               []
             );
           }
@@ -220,32 +218,29 @@ export class ConversationManager {
 
           // Context management
           this.messageBuilder.pruneContextIfNeeded(180000);
-        } catch (error) {
-          // Better error handling - catch and classify errors properly
+        } catch (iterationError) {
+          // FIXED: When ErrorHandler.executeWithRetry throws an error, it means all retries are exhausted
+          // This should result in conversation failure
           const anthropicError =
-            error instanceof AnthropicError
-              ? error
-              : new AnthropicError(
-                  "unknown_error",
-                  (error as Error).message,
-                  undefined,
-                  undefined,
-                  error as Error
-                );
+            iterationError instanceof AnthropicError
+              ? iterationError
+              : this.errorHandler.classifyError(iterationError as Error);
 
-          // If it's a budget exceeded error, return immediately
-          if (anthropicError.code === "budget_exceeded") {
-            return {
-              success: false,
-              error: anthropicError,
-              iterationCount,
-              totalCost,
-              conversationId: this.conversationId,
-            };
-          }
+          Logger.error("API request failed after all retries", {
+            conversationId: this.conversationId,
+            iteration: iterationCount,
+            error: anthropicError.message,
+            errorCode: anthropicError.code,
+          });
 
-          // For other errors, continue to error handling at end of function
-          throw anthropicError;
+          // FIXED: Any error thrown by ErrorHandler.executeWithRetry should result in conversation failure
+          return {
+            success: false,
+            error: anthropicError,
+            iterationCount,
+            totalCost,
+            conversationId: this.conversationId,
+          };
         }
       }
 
@@ -275,12 +270,13 @@ export class ConversationManager {
         conversationId: this.conversationId,
       };
     } catch (error) {
+      // Handle outer errors (shouldn't happen with proper error handling above)
       const anthropicError =
         error instanceof AnthropicError
           ? error
           : new AnthropicError(
               "unknown_error",
-              (error as Error).message,
+              `Conversation failed: ${(error as Error).message}`,
               undefined,
               undefined,
               error as Error
@@ -423,7 +419,7 @@ export class ConversationManager {
     return results;
   }
 
-  // FIXED: Tool formatting to match Claude API expectations exactly
+  // Tool formatting to match Claude API expectations exactly
   private formatToolsForClaude(tools: Tool[]): any[] {
     return tools.map((tool) => ({
       name: tool.name || "unknown_tool",

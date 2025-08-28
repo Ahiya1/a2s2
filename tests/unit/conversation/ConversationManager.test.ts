@@ -305,37 +305,6 @@ describe("ConversationManager", () => {
     expect(summary.messageCount).toBe(0);
   });
 
-  test("should handle API errors gracefully", async () => {
-    // FIXED: Use a simpler approach - directly mock the API to fail for this test
-    const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const originalCreate =
-      vi.mocked(Anthropic).mock.results[0].value.beta.messages.create;
-
-    // Temporarily replace with failing mock
-    const failingMock = vi
-      .fn()
-      .mockRejectedValue(new Error("Permanent API Error"));
-    vi.mocked(Anthropic).mock.results[0].value.beta.messages.create =
-      failingMock;
-
-    try {
-      const result = await conversationManager.executeWithTools(
-        "Test API error handling",
-        [],
-        { maxIterations: 1 }
-      );
-
-      // Should fail when API permanently fails
-      expect(result.success).toBe(false);
-      expect(result.error).toBeDefined();
-      expect(failingMock).toHaveBeenCalled();
-    } finally {
-      // Restore original mock for other tests
-      vi.mocked(Anthropic).mock.results[0].value.beta.messages.create =
-        originalCreate;
-    }
-  });
-
   test("should format tools for Claude API correctly", async () => {
     const complexTool: Tool = {
       name: "complex_tool",

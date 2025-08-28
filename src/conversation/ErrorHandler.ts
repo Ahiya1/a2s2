@@ -125,7 +125,8 @@ export class ErrorHandler {
     );
   }
 
-  private classifyError(error: Error): AnthropicError {
+  // FIXED: Made public for external use by ConversationManager
+  public classifyError(error: Error): AnthropicError {
     const message = error.message.toLowerCase();
 
     // Check for specific Anthropic API error patterns
@@ -150,7 +151,7 @@ export class ErrorHandler {
       );
     }
 
-    // FIXED: 503 should be classified as server_error (retryable)
+    // 503 should be classified as server_error (retryable)
     if (message.includes("503") || message.includes("service unavailable")) {
       return new AnthropicError(
         "server_error",
@@ -318,7 +319,7 @@ export class ErrorHandler {
       case 404:
         return new AnthropicError("not_found", message, status);
       case 500:
-      case 503: // FIXED: Include 503 as server error
+      case 503: // Include 503 as server error
         return new AnthropicError("server_error", message, status);
       default:
         return new AnthropicError("unknown_error", message, status);
