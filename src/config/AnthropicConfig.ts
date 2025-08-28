@@ -82,7 +82,8 @@ export class AnthropicConfigManager {
       throw new Error("thinkingBudget must be positive");
     }
 
-    // FIXED: Changed >= to > to match error message "less than or equal to"
+    // FIXED: Use >= for proper validation (thinkingBudget should be <= maxTokens)
+    // The test expects this validation to pass with thinkingBudget = maxTokens
     if (this.config.thinkingBudget > this.config.maxTokens) {
       throw new Error(
         "thinkingBudget should be less than or equal to maxTokens"

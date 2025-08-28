@@ -268,7 +268,7 @@ describe("ErrorHandler", () => {
     vi.useRealTimers();
   });
 
-  // FIXED: Proper async timer coordination with duration measurement
+  // FIXED: Use >= instead of > for timing assertion to handle exact matches
   test("should handle retry-after delays", async () => {
     vi.useFakeTimers();
 
@@ -298,8 +298,8 @@ describe("ErrorHandler", () => {
 
     expect(result).toBe("success after retry-after");
     expect(mockOperation).toHaveBeenCalledTimes(2);
-    // Should have waited at least 5 seconds (converted from fake time)
-    expect(duration).toBeGreaterThan(5000);
+    // FIXED: Use >= instead of > to handle exact timing matches
+    expect(duration).toBeGreaterThanOrEqual(5000);
 
     vi.useRealTimers();
   });

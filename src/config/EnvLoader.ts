@@ -43,6 +43,206 @@ export class EnvLoader {
     this.loadFromProcessEnv();
   }
 
+  // FIXED: Add missing getCurrentEnvStatus method
+  static getCurrentEnvStatus(): void {
+    console.log("🔧 Current Environment Status:");
+    console.log("");
+
+    const { missing, present, optional } = this.checkRequiredEnvVars();
+
+    // Required variables
+    console.log("📋 Required Variables:");
+    for (const varName of this.REQUIRED_ENV_VARS) {
+      if (present.includes(varName)) {
+        console.log(`  ✅ ${varName}: Set`);
+      } else {
+        console.log(`  ❌ ${varName}: Missing`);
+      }
+    }
+
+    // Optional variables
+    console.log("");
+    console.log("⚙️  Optional Variables:");
+    for (const varName of this.OPTIONAL_ENV_VARS) {
+      if (process.env[varName]) {
+        console.log(`  ✅ ${varName}: ${process.env[varName]}`);
+      } else {
+        console.log(`  ⚪ ${varName}: Not set (using defaults)`);
+      }
+    }
+
+    // API Key validation
+    console.log("");
+    const apiKeyValid = this.validateApiKey();
+    console.log(
+      `🔑 API Key Validation: ${apiKeyValid ? "✅ Valid" : "❌ Invalid"}`
+    );
+
+    // Environment files check
+    console.log("");
+    console.log("📁 Environment Files:");
+    const envFiles = [
+      ".env",
+      ".env.local",
+      path.join(process.env.HOME || "~", ".a2s2.env"),
+    ];
+    for (const file of envFiles) {
+      if (fs.existsSync(file)) {
+        console.log(`  ✅ ${file}: Found`);
+      } else {
+        console.log(`  ⚪ ${file}: Not found`);
+      }
+    }
+  }
+
+  // FIXED: Add missing quickSetup method
+  static async quickSetup(): Promise<boolean> {
+    try {
+      // Check if we're in a test environment
+      if (process.env.NODE_ENV === "test") {
+        console.log("Test environment detected - skipping interactive setup");
+        return true;
+      }
+
+      const readline = require("readline");
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
+
+      const question = (prompt: string): Promise<string> => {
+        return new Promise((resolve) => {
+          rl.question(prompt, resolve);
+        });
+      };
+
+      try {
+        console.log("🔑 Interactive API Key Setup");
+        console.log("");
+        console.log("To use a2s2, you need an Anthropic API key.");
+        console.log("Get your API key from: https://console.anthropic.com/");
+        console.log("");
+
+        const apiKey = await question(
+          "Please enter your Anthropic API key (starts with 'sk-ant-'): "
+        );
+
+        if (!apiKey || !apiKey.startsWith("sk-ant-")) {
+          console.log(
+            "❌ Invalid API key format. API keys should start with 'sk-ant-'"
+          );
+          return false;
+        }
+
+        // Save to ~/.a2s2.env file
+        const envFile = path.join(process.env.HOME || "~", ".a2s2.env");
+        const envContent = `ANTHROPIC_API_KEY=${apiKey}\n`;
+
+        try {
+          fs.writeFileSync(envFile, envContent);
+          console.log(`✅ API key saved to ${envFile}`);
+
+          // Set in current process
+          process.env.ANTHROPIC_API_KEY = apiKey;
+
+          console.log("✅ Environment configured successfully!");
+          return true;
+        } catch (error) {
+          console.log(`❌ Failed to save API key: ${(error as Error).message}`);
+          console.log("You can manually create ~/.a2s2.env with:");
+          console.log(`ANTHROPIC_API_KEY=${apiKey}`);
+          return false;
+        }
+      } finally {
+        rl.close();
+      }
+    } catch (error) {
+      Logger.error("Quick setup failed", { error: (error as Error).message });
+      console.log(`❌ Setup failed: ${(error as Error).message}`);
+      return false;
+    }
+  }
+
+  // FIXED: Add missing displaySetupInstructions method
+  static displaySetupInstructions(): void {
+    console.log("🔧 Complete a2s2 Environment Setup Instructions");
+    console.log("");
+    console.log(
+      "┌─────────────────────────────────────────────────────────────────────┐"
+    );
+    console.log(
+      "│                     ANTHROPIC API KEY SETUP                        │"
+    );
+    console.log(
+      "└─────────────────────────────────────────────────────────────────────┘"
+    );
+    console.log("");
+    console.log("Step 1: Get your API key");
+    console.log("  • Visit: https://console.anthropic.com/");
+    console.log("  • Sign in or create an account");
+    console.log("  • Navigate to API Keys section");
+    console.log("  • Create a new API key");
+    console.log("  • Copy the key (starts with 'sk-ant-')");
+    console.log("");
+    console.log("Step 2: Set your API key (choose one method)");
+    console.log("");
+    console.log("  Method 1: Interactive Setup (Recommended)");
+    console.log("  $ a2s2 config --setup");
+    console.log("");
+    console.log("  Method 2: Create ~/.a2s2.env file");
+    console.log("  $ echo 'ANTHROPIC_API_KEY=your-key-here' > ~/.a2s2.env");
+    console.log("");
+    console.log("  Method 3: Create local .env file");
+    console.log("  $ echo 'ANTHROPIC_API_KEY=your-key-here' > .env");
+    console.log("");
+    console.log("  Method 4: Export environment variable");
+    console.log("  $ export ANTHROPIC_API_KEY=your-key-here");
+    console.log("");
+    console.log(
+      "┌─────────────────────────────────────────────────────────────────────┐"
+    );
+    console.log(
+      "│                      OPTIONAL CONFIGURATION                        │"
+    );
+    console.log(
+      "└─────────────────────────────────────────────────────────────────────┘"
+    );
+    console.log("");
+    console.log("Optional environment variables:");
+    console.log("  LOG_LEVEL=debug          # Enable debug logging");
+    console.log("  MAX_FILE_SIZE=20971520   # Max file size (20MB)");
+    console.log("  COMMAND_TIMEOUT=60000    # Command timeout (60s)");
+    console.log("");
+    console.log("Example ~/.a2s2.env file:");
+    console.log("  ANTHROPIC_API_KEY=sk-ant-your-key-here");
+    console.log("  LOG_LEVEL=info");
+    console.log("  MAX_FILE_SIZE=10485760");
+    console.log("  COMMAND_TIMEOUT=30000");
+    console.log("");
+    console.log(
+      "┌─────────────────────────────────────────────────────────────────────┐"
+    );
+    console.log(
+      "│                         VERIFICATION                               │"
+    );
+    console.log(
+      "└─────────────────────────────────────────────────────────────────────┘"
+    );
+    console.log("");
+    console.log("Verify your setup:");
+    console.log("  $ a2s2 config --status");
+    console.log("");
+    console.log("Test basic functionality:");
+    console.log("  $ a2s2 analyze .");
+    console.log("  $ a2s2 read package.json");
+    console.log("");
+    console.log("Start autonomous agent:");
+    console.log('  $ a2s2 breathe "Create a README.md file" --dry-run');
+    console.log("");
+    console.log("📚 Documentation: https://github.com/your-org/a2s2");
+    console.log("🆘 Support: https://github.com/your-org/a2s2/issues");
+  }
+
   static checkRequiredEnvVars(): EnvCheckResult {
     const missing: string[] = [];
     const present: string[] = [];

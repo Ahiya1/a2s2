@@ -61,6 +61,26 @@ export class OutputFormatter {
     });
   }
 
+  // FIXED: Add missing formatFileList method (alias to formatList)
+  static formatFileList(items: string[], title?: string): void {
+    this.formatList(items, title);
+  }
+
+  // FIXED: Add missing formatToolResult method
+  static formatToolResult(toolName: string, result: string): void {
+    this.formatSection(`${toolName} Result`);
+    console.log(result);
+  }
+
+  // FIXED: Add missing formatValidationResult method
+  static formatValidationResult(toolName: string, isValid: boolean): void {
+    if (isValid) {
+      console.log(this.colorize("green", `✅ ${toolName}: Valid`));
+    } else {
+      console.log(this.colorize("red", `❌ ${toolName}: Invalid`));
+    }
+  }
+
   static formatKeyValue(key: string, value: string | number | boolean): void {
     console.log(`  ${this.colorize("bright", key)}: ${value}`);
   }
