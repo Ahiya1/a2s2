@@ -10,6 +10,7 @@ export interface ConversationMessage {
         text?: string;
         tool_use_id?: string;
         content?: string;
+        cache_control?: { type: "ephemeral" };
       }>;
   thinking_content?: string;
 }
@@ -96,6 +97,7 @@ Begin autonomous execution now. Start by exploring the project structure and und
         {
           type: "text",
           text: systemPrompt,
+          cache_control: { type: "ephemeral" },
         },
       ];
       this.systemPromptCached = true;
@@ -273,10 +275,11 @@ Begin autonomous execution now. Start by exploring the project structure and und
     }
 
     return tools
-      .map(
-        (tool, index) =>
-          `${index + 1}. ${tool.name}: ${tool.description || "No description available"}`
-      )
+      .map((tool, index) => {
+        const name = tool.name || "unnamed_tool";
+        const description = tool.description || "No description available";
+        return `${index + 1}. ${name}: ${description}`;
+      })
       .join("\n");
   }
 

@@ -1,4 +1,4 @@
-import Anthropic from "anthropic";
+import Anthropic from "@anthropic-ai/sdk";
 import { Tool } from "../ToolManager";
 import { ParameterParser } from "../enhanced/ParameterParser";
 import { Logger } from "../../logging/Logger";
@@ -119,7 +119,7 @@ export class WebSearchTool implements Tool {
       const searchPrompt = this.buildSearchPrompt(searchOptions);
 
       // Execute search using Anthropic's native web search
-      const response = await this.anthropic.messages.create({
+      const response = await this.anthropic.beta.messages.create({
         model: "claude-sonnet-4-20250514",
         max_tokens: 4000,
         tools: [

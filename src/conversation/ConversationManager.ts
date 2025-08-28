@@ -1,4 +1,4 @@
-import Anthropic from "anthropic";
+import Anthropic from "@anthropic-ai/sdk";
 import {
   AnthropicConfig,
   AnthropicConfigManager,
@@ -272,7 +272,10 @@ export class ConversationManager {
     const request = {
       model: config.model,
       max_tokens: config.max_tokens,
-      thinking: config.thinking,
+      thinking: {
+        type: "enabled" as const,
+        budget_tokens: config.thinking.budget_tokens,
+      },
       messages: optimizedMessages,
       tools: this.formatToolsForClaude(tools),
       betas: this.configManager.getBetaHeaders(),
@@ -303,7 +306,7 @@ export class ConversationManager {
     // Execute tool calls in parallel for efficiency
     const executionPromises = toolCalls.map(
       async (toolCall): Promise<ToolExecutionResult> => {
-        const tool = tools.find((t) => t.name === toolCall.name);
+        const tool = tools.find((t) => (t.name || "") === toolCall.name);
 
         if (!tool) {
           const errorMsg = `Tool '${toolCall.name}' not found`;
@@ -371,8 +374,8 @@ export class ConversationManager {
 
   private formatToolsForClaude(tools: Tool[]): any[] {
     return tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description || `Execute ${tool.name}`,
+      name: tool.name || "unknown_tool",
+      description: tool.description || `Execute ${tool.name || "unknown tool"}`,
       input_schema: {
         type: "object",
         properties: tool.schema?.properties || {},

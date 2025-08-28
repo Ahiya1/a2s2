@@ -26,6 +26,7 @@ export type ErrorCode =
   | "server_error" // 500 - Internal server error
   | "timeout_error" // Request timeout
   | "network_error" // Network connectivity issues
+  | "budget_exceeded" // Cost budget exceeded
   | "unknown_error"; // Unclassified error
 
 export class AnthropicError extends Error {
@@ -155,6 +156,16 @@ export class ErrorHandler {
     ) {
       return new AnthropicError(
         "context_overflow",
+        error.message,
+        400,
+        undefined,
+        error
+      );
+    }
+
+    if (message.includes("budget") && message.includes("exceeded")) {
+      return new AnthropicError(
+        "budget_exceeded",
         error.message,
         400,
         undefined,

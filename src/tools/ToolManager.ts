@@ -6,7 +6,24 @@ import { ShellExecutor } from "./shell/ShellExecutor";
 import { Logger } from "../logging/Logger";
 
 export interface Tool {
+  name?: string;
+  description?: string;
+  schema?: {
+    type: string;
+    properties: Record<string, any>;
+    required: string[];
+  };
   execute(params: unknown): Promise<string>;
+}
+
+export interface EnhancedTool extends Tool {
+  name: string;
+  description: string;
+  schema: {
+    type: string;
+    properties: Record<string, any>;
+    required: string[];
+  };
 }
 
 export class ToolManager {
@@ -25,6 +42,20 @@ export class ToolManager {
 
   registerTool(name: string, tool: Tool): void {
     Logger.info(`Registering tool: ${name}`);
+
+    // Enhance the tool with name and description if not present
+    if (!tool.name) {
+      tool.name = name;
+    }
+
+    if (!tool.description) {
+      tool.description = this.getDefaultDescription(name);
+    }
+
+    if (!tool.schema) {
+      tool.schema = this.getDefaultSchema(name);
+    }
+
     this.tools.set(name, tool);
   }
 
@@ -59,6 +90,14 @@ export class ToolManager {
     return this.tools.has(name);
   }
 
+  getTool(name: string): Tool | undefined {
+    return this.tools.get(name);
+  }
+
+  getAllTools(): Tool[] {
+    return Array.from(this.tools.values());
+  }
+
   getToolDescriptions(): string {
     const descriptions = [
       "get_project_tree: Analyze project structure using tree command",
@@ -68,6 +107,83 @@ export class ToolManager {
     ];
 
     return descriptions.join("\n");
+  }
+
+  private getDefaultDescription(name: string): string {
+    const descriptions: Record<string, string> = {
+      get_project_tree:
+        "Analyze project structure using tree command with intelligent exclusions",
+      read_files:
+        "Read multiple files and return their contents with error handling",
+      write_files: "Write multiple files atomically with rollback protection",
+      run_command: "Execute shell commands with timeout and error handling",
+      web_search:
+        "Search the web for current information, documentation, and best practices",
+      report_phase:
+        "Report current phase of execution and provide status updates",
+      report_complete:
+        "Signal task completion with comprehensive summary report",
+      continue_work: "Indicate continuation of work with detailed next steps",
+    };
+
+    return descriptions[name] || `Execute ${name} tool`;
+  }
+
+  private getDefaultSchema(name: string): any {
+    const schemas: Record<string, any> = {
+      get_project_tree: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Project path to analyze" },
+        },
+        required: [],
+      },
+      read_files: {
+        type: "object",
+        properties: {
+          paths: {
+            type: "array",
+            items: { type: "string" },
+            description: "Array of file paths to read",
+          },
+        },
+        required: ["paths"],
+      },
+      write_files: {
+        type: "object",
+        properties: {
+          files: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                path: { type: "string", description: "File path" },
+                content: { type: "string", description: "File content" },
+              },
+              required: ["path", "content"],
+            },
+            description: "Array of files to write",
+          },
+        },
+        required: ["files"],
+      },
+      run_command: {
+        type: "object",
+        properties: {
+          command: { type: "string", description: "Shell command to execute" },
+          timeout: { type: "number", description: "Timeout in milliseconds" },
+        },
+        required: ["command"],
+      },
+    };
+
+    return (
+      schemas[name] || {
+        type: "object",
+        properties: {},
+        required: [],
+      }
+    );
   }
 
   async validateTools(): Promise<{ valid: string[]; invalid: string[] }> {
