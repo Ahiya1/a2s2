@@ -5,7 +5,12 @@ import {
 } from "../config/AnthropicConfig";
 import { ErrorHandler, AnthropicError } from "./ErrorHandler";
 import { MessageBuilder, ConversationMessage } from "./MessageBuilder";
-import { ResponseParser, ParsedResponse, ToolCall } from "./ResponseParser";
+import {
+  ResponseParser,
+  ParsedResponse,
+  ToolCall,
+  ThinkingBlock,
+} from "./ResponseParser"; // UPDATED: Added ThinkingBlock import
 import { CostOptimizer, TokenUsage, CostCalculation } from "./CostOptimizer";
 import { Tool } from "../tools/ToolManager";
 import { Logger } from "../logging/Logger";
@@ -149,17 +154,20 @@ export class ConversationManager {
             stopReason: lastResponse.stopReason,
           });
 
-          // FIXED: Add assistant response to conversation properly with tool calls
+          // FIXED: Add assistant response to conversation properly with preserved thinking blocks
           if (lastResponse.toolCalls.length > 0) {
-            this.messageBuilder.addAssistantMessageWithToolCalls(
+            // Use the new method with preserved thinking blocks
+            this.messageBuilder.addAssistantMessageWithPreservedThinking(
               lastResponse.textContent,
-              lastResponse.toolCalls,
-              lastResponse.thinkingContent
+              lastResponse.thinkingBlocks, // Use preserved blocks with signatures
+              lastResponse.toolCalls
             );
           } else {
-            this.messageBuilder.addAssistantMessage(
+            // For responses without tool calls, still use preserved thinking blocks
+            this.messageBuilder.addAssistantMessageWithPreservedThinking(
               lastResponse.textContent,
-              lastResponse.thinkingContent
+              lastResponse.thinkingBlocks, // Use preserved blocks with signatures
+              []
             );
           }
 

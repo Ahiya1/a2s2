@@ -6,9 +6,17 @@ export interface ToolCall {
   parameters: any;
 }
 
+// NEW: Interface to preserve complete thinking blocks with signatures
+export interface ThinkingBlock {
+  type: "thinking";
+  thinking: string;
+  signature: string;
+}
+
 export interface ParsedResponse {
   textContent: string;
   thinkingContent?: string;
+  thinkingBlocks: ThinkingBlock[]; // NEW: Preserve complete thinking blocks
   toolCalls: ToolCall[];
   stopReason: string;
   usage: {
@@ -17,11 +25,6 @@ export interface ParsedResponse {
     thinkingTokens?: number;
   };
   rawResponse: any;
-}
-
-export interface ThinkingBlock {
-  type: "thinking";
-  content: string;
 }
 
 export interface TextBlock {
@@ -48,6 +51,7 @@ export class ResponseParser {
     const parsed: ParsedResponse = {
       textContent: "",
       thinkingContent: undefined,
+      thinkingBlocks: [], // NEW: Store complete thinking blocks
       toolCalls: [],
       stopReason: response.stop_reason || "unknown",
       usage: {
@@ -68,6 +72,7 @@ export class ResponseParser {
     Logger.debug("Response parsed", {
       textLength: parsed.textContent.length,
       thinkingLength: parsed.thinkingContent?.length || 0,
+      thinkingBlockCount: parsed.thinkingBlocks.length, // NEW
       toolCallCount: parsed.toolCalls.length,
       stopReason: parsed.stopReason,
     });
@@ -87,9 +92,17 @@ export class ResponseParser {
         break;
 
       case "thinking":
-        if ("content" in block) {
+        if ("thinking" in block && "signature" in block) {
+          // NEW: Store the complete thinking block with signature
+          parsed.thinkingBlocks.push({
+            type: "thinking",
+            thinking: block.thinking,
+            signature: block.signature,
+          });
+
+          // Also keep the text content for backwards compatibility
           parsed.thinkingContent =
-            (parsed.thinkingContent || "") + block.content;
+            (parsed.thinkingContent || "") + block.thinking;
         }
         break;
 
@@ -161,6 +174,12 @@ export class ResponseParser {
   static extractThinkingContent(response: any): string | undefined {
     const parsed = this.parse(response);
     return parsed.thinkingContent;
+  }
+
+  // NEW: Method to extract complete thinking blocks
+  static extractThinkingBlocks(response: any): ThinkingBlock[] {
+    const parsed = this.parse(response);
+    return parsed.thinkingBlocks;
   }
 
   static hasToolCalls(response: any): boolean {
@@ -290,6 +309,7 @@ export class ResponseParser {
       return {
         textContent: response?.content?.[0]?.text || "Error parsing response",
         thinkingContent: undefined,
+        thinkingBlocks: [], // NEW
         toolCalls: [],
         stopReason: "error",
         usage: {

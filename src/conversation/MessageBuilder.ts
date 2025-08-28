@@ -1,5 +1,6 @@
 import { Tool } from "../tools/ToolManager";
 import { Logger } from "../logging/Logger";
+import { ThinkingBlock } from "./ResponseParser"; // NEW: Import ThinkingBlock
 
 export interface ConversationMessage {
   role: "user" | "assistant";
@@ -14,6 +15,8 @@ export interface ConversationMessage {
         id?: string;
         name?: string;
         input?: any;
+        thinking?: string; // NEW: For thinking blocks
+        signature?: string; // NEW: For thinking block signatures
       }>;
   thinking_content?: string; // Kept for backwards compatibility but not used with structured content
 }
@@ -137,51 +140,21 @@ Begin autonomous execution now. Start by exploring the project structure and und
     return message;
   }
 
-  addAssistantMessage(
-    content: string,
-    thinkingContent?: string
-  ): ConversationMessage {
-    // Always structure content properly when thinking mode is enabled
-    // Since thinking mode is enabled globally in the config, we need to always include thinking block
-    const messageContent = [
-      {
-        type: "thinking",
-        content:
-          thinkingContent && thinkingContent.trim() ? thinkingContent : "",
-      },
-      {
-        type: "text",
-        text: content,
-      },
-    ];
-
-    const message: ConversationMessage = {
-      role: "assistant",
-      content: messageContent,
-    };
-
-    this.messages.push(message);
-    Logger.debug("Added assistant message", {
-      contentLength: content.length,
-      hasThinking: !!thinkingContent,
-      totalMessages: this.messages.length,
-    });
-
-    return message;
-  }
-
-  addAssistantMessageWithToolCalls(
+  // NEW: Method to add assistant message with preserved thinking blocks
+  addAssistantMessageWithPreservedThinking(
     textContent: string,
-    toolCalls: ToolCall[],
-    thinkingContent?: string
+    thinkingBlocks: ThinkingBlock[],
+    toolCalls: ToolCall[] = []
   ): ConversationMessage {
     const content: any[] = [];
 
-    // CRITICAL: When thinking is enabled, thinking block must ALWAYS come first
-    // Even if thinkingContent is empty, we need the thinking block for API compliance
-    content.push({
-      type: "thinking",
-      content: thinkingContent && thinkingContent.trim() ? thinkingContent : "",
+    // Add preserved thinking blocks first (with signatures)
+    thinkingBlocks.forEach((block) => {
+      content.push({
+        type: "thinking",
+        thinking: block.thinking,
+        signature: block.signature,
+      });
     });
 
     // Add text content if present
@@ -207,14 +180,79 @@ Begin autonomous execution now. Start by exploring the project structure and und
       content: content,
     };
 
-    // Note: thinking_content is handled in the content array above
-    // Don't set it separately when using structured content
+    this.messages.push(message);
+    Logger.debug("Added assistant message with preserved thinking", {
+      contentLength: textContent.length,
+      thinkingBlockCount: thinkingBlocks.length,
+      toolCallCount: toolCalls.length,
+      totalMessages: this.messages.length,
+    });
+
+    return message;
+  }
+
+  // DEPRECATED: These methods should not be used anymore with thinking mode
+  addAssistantMessage(
+    content: string,
+    thinkingContent?: string
+  ): ConversationMessage {
+    Logger.warn(
+      "addAssistantMessage called with thinking mode enabled - this may cause API errors"
+    );
+
+    // For backwards compatibility, create a simple message without thinking blocks
+    const message: ConversationMessage = {
+      role: "assistant",
+      content: content,
+    };
 
     this.messages.push(message);
-    Logger.debug("Added assistant message with tool calls", {
+    Logger.debug("Added assistant message (legacy)", {
+      contentLength: content.length,
+      totalMessages: this.messages.length,
+    });
+
+    return message;
+  }
+
+  addAssistantMessageWithToolCalls(
+    textContent: string,
+    toolCalls: ToolCall[],
+    thinkingContent?: string
+  ): ConversationMessage {
+    Logger.warn(
+      "addAssistantMessageWithToolCalls called with thinking mode enabled - this may cause API errors"
+    );
+
+    const content: any[] = [];
+
+    // Add text content if present
+    if (textContent.trim()) {
+      content.push({
+        type: "text",
+        text: textContent,
+      });
+    }
+
+    // Add tool_use blocks
+    toolCalls.forEach((toolCall) => {
+      content.push({
+        type: "tool_use",
+        id: toolCall.id,
+        name: toolCall.name,
+        input: toolCall.parameters,
+      });
+    });
+
+    const message: ConversationMessage = {
+      role: "assistant",
+      content: content,
+    };
+
+    this.messages.push(message);
+    Logger.debug("Added assistant message with tool calls (legacy)", {
       contentLength: textContent.length,
       toolCallCount: toolCalls.length,
-      hasThinking: !!thinkingContent,
       totalMessages: this.messages.length,
     });
 
@@ -292,6 +330,9 @@ Begin autonomous execution now. Start by exploring the project structure and und
           }
           if (content.content) {
             totalTokens += this.estimateTokensInText(content.content);
+          }
+          if (content.thinking) {
+            totalTokens += this.estimateTokensInText(content.thinking);
           }
         }
       }
