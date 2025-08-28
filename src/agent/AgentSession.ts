@@ -61,6 +61,11 @@ export class AgentSession {
   constructor(options: AgentSessionOptions) {
     this.sessionId = this.generateSessionId();
 
+    // FIXED: Validate API key first before proceeding
+    if (!process.env.ANTHROPIC_API_KEY) {
+      throw new Error("ANTHROPIC_API_KEY environment variable is required");
+    }
+
     // Initialize conversation manager with Claude 4 Sonnet
     const configManager = new AnthropicConfigManager({
       enableExtendedContext: options.enableExtendedContext || false,
@@ -146,6 +151,7 @@ export class AgentSession {
         duration: `${(Date.now() - startTime) / 1000}s`,
       });
 
+      // FIXED: Return the actual result.success instead of hardcoding
       return {
         success: result.success,
         finalPhase: this.phaseReportingTool.getCurrentPhase() || "EXPLORE",

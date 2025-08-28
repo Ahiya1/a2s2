@@ -1,10 +1,11 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
-import { createBreatheCommand } from "../../../src/cli/commands/breathe";
-import { TestUtils } from "../../helpers/TestUtils";
+import { createBreatheCommand } from "../../src/cli/commands/breathe"; // Fixed import path
+import { TestUtils } from "../helpers/TestUtils";
 import { Command } from "commander";
 
 // Mock the AgentSession
-vi.mock("../../../src/agent/AgentSession", () => ({
+vi.mock("../../src/agent/AgentSession", () => ({
+  // Fixed import path
   AgentSession: vi.fn().mockImplementation(() => ({
     getSessionId: vi.fn().mockReturnValue("test_session_123"),
     getCurrentPhase: vi.fn().mockReturnValue("COMPLETE"),
@@ -53,9 +54,9 @@ describe("Breathe Command", () => {
     mockConsoleOutput = TestUtils.mockConsoleOutput();
 
     // Mock process.exit to prevent actual exit during tests
-    mockExit = vi.spyOn(process, "exit").mockImplementation(() => {
+    mockExit = vi.spyOn(process, "exit").mockImplementation((() => {
       throw new Error("Process exit called");
-    });
+    }) as any);
 
     // Set required environment variable
     process.env.ANTHROPIC_API_KEY = "sk-ant-test-key-123";
@@ -308,7 +309,7 @@ describe("Breathe Command", () => {
 
   test("should handle command execution failure gracefully", async () => {
     // Mock AgentSession to throw an error
-    const { AgentSession } = await import("../../../src/agent/AgentSession");
+    const { AgentSession } = await import("../../src/agent/AgentSession");
     vi.mocked(AgentSession).mockImplementationOnce(
       () =>
         ({
