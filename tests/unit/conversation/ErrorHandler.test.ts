@@ -230,32 +230,35 @@ describe("ErrorHandler", () => {
     }
   });
 
-  // FIXED: Proper timer coordination
+  // FIXED: Proper async timer coordination
   test("should apply exponential backoff with jitter", async () => {
     vi.useFakeTimers();
 
+    const customHandler = new ErrorHandler({ maxRetries: 3, baseDelay: 1000 });
     const error = new Error("Server temporarily unavailable");
-    error.message = "503 service unavailable";
+    error.message = "503 service unavailable"; // FIXED: Use 503 which is now retryable
 
     mockOperation
       .mockRejectedValueOnce(error)
       .mockRejectedValueOnce(error)
       .mockResolvedValueOnce("success");
 
-    // Start the operation
-    const executePromise = errorHandler.executeWithRetry(
+    // Start the retry operation
+    const executePromise = customHandler.executeWithRetry(
       mockOperation,
       "backoff_test"
     );
 
-    // Let the first attempt fail
+    // Process first failure and wait for first retry delay
     await vi.runOnlyPendingTimersAsync();
+    await vi.advanceTimersByTimeAsync(1200); // Base delay + margin for jitter
 
-    // Fast-forward through first retry delay and let it process
-    await vi.advanceTimersByTimeAsync(1500); // Base delay + jitter margin
+    // Process second failure and wait for second retry delay
+    await vi.runOnlyPendingTimersAsync();
+    await vi.advanceTimersByTimeAsync(2200); // Exponential backoff + margin
 
-    // Fast-forward through second retry delay and let it process
-    await vi.advanceTimersByTimeAsync(2500); // Exponential backoff + jitter margin
+    // Complete the operation
+    await vi.runOnlyPendingTimersAsync();
 
     const result = await executePromise;
 
@@ -265,7 +268,7 @@ describe("ErrorHandler", () => {
     vi.useRealTimers();
   });
 
-  // FIXED: Proper async timer handling
+  // FIXED: Proper async timer coordination with duration measurement
   test("should handle retry-after delays", async () => {
     vi.useFakeTimers();
 
@@ -275,19 +278,28 @@ describe("ErrorHandler", () => {
       .mockRejectedValueOnce(error)
       .mockResolvedValueOnce("success after retry-after");
 
+    const startTime = Date.now();
     const executePromise = customHandler.executeWithRetry(
       mockOperation,
       "retry_after_delay_test"
     );
 
-    // Let initial failure happen
+    // Process initial failure
     await vi.runOnlyPendingTimersAsync();
 
-    // Advance through the retry-after delay
+    // Advance through the retry-after delay (5 seconds)
     await vi.advanceTimersByTimeAsync(5000);
 
+    // Complete the operation
+    await vi.runOnlyPendingTimersAsync();
+
     const result = await executePromise;
+    const duration = Date.now() - startTime;
+
     expect(result).toBe("success after retry-after");
+    expect(mockOperation).toHaveBeenCalledTimes(2);
+    // Should have waited at least 5 seconds (converted from fake time)
+    expect(duration).toBeGreaterThan(5000);
 
     vi.useRealTimers();
   });
@@ -351,7 +363,6 @@ describe("ErrorHandler", () => {
     }
   });
 
-  // FIXED: Simplified test that doesn't timeout
   test("should handle malformed retry-after values", async () => {
     const error = new Error("Rate limited - retry-after: invalid");
     mockOperation.mockRejectedValueOnce(error);

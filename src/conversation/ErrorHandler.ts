@@ -150,6 +150,17 @@ export class ErrorHandler {
       );
     }
 
+    // FIXED: 503 should be classified as server_error (retryable)
+    if (message.includes("503") || message.includes("service unavailable")) {
+      return new AnthropicError(
+        "server_error",
+        error.message,
+        503,
+        undefined,
+        error
+      );
+    }
+
     if (
       message.includes("context window") ||
       message.includes("too many tokens")
@@ -307,6 +318,7 @@ export class ErrorHandler {
       case 404:
         return new AnthropicError("not_found", message, status);
       case 500:
+      case 503: // FIXED: Include 503 as server error
         return new AnthropicError("server_error", message, status);
       default:
         return new AnthropicError("unknown_error", message, status);

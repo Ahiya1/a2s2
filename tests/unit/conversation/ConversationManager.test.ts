@@ -5,34 +5,40 @@ import {
 } from "../../../src/conversation/ConversationManager";
 import { Tool } from "../../../src/tools/ToolManager";
 
+// FIXED: Store mock instance for proper access in tests
+let mockAnthropicInstance: any;
+
 // Mock the Anthropic SDK
 vi.mock("@anthropic-ai/sdk", () => ({
-  default: vi.fn().mockImplementation(() => ({
-    beta: {
-      messages: {
-        create: vi.fn().mockResolvedValue({
-          content: [
-            {
-              type: "text",
-              text: "I'll help you with your request.",
+  default: vi.fn().mockImplementation(() => {
+    mockAnthropicInstance = {
+      beta: {
+        messages: {
+          create: vi.fn().mockResolvedValue({
+            content: [
+              {
+                type: "text",
+                text: "I'll help you with your request.",
+              },
+              {
+                type: "tool_use",
+                id: "tool_call_1",
+                name: "test_tool",
+                input: { param: "value" },
+              },
+            ],
+            stop_reason: "tool_use",
+            usage: {
+              input_tokens: 1000,
+              output_tokens: 200,
+              thinking_tokens: 100,
             },
-            {
-              type: "tool_use",
-              id: "tool_call_1",
-              name: "test_tool",
-              input: { param: "value" },
-            },
-          ],
-          stop_reason: "tool_use",
-          usage: {
-            input_tokens: 1000,
-            output_tokens: 200,
-            thinking_tokens: 100,
-          },
-        }),
+          }),
+        },
       },
-    },
-  })),
+    };
+    return mockAnthropicInstance;
+  }),
 }));
 
 describe("ConversationManager", () => {
@@ -190,11 +196,7 @@ describe("ConversationManager", () => {
 
   test("should handle missing tools gracefully", async () => {
     // Mock Anthropic to request a tool that doesn't exist
-    const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const mockCreate =
-      vi.mocked(Anthropic).mock.results[0].value.beta.messages.create;
-
-    mockCreate.mockResolvedValueOnce({
+    mockAnthropicInstance.beta.messages.create.mockResolvedValueOnce({
       content: [
         {
           type: "tool_use",
@@ -290,11 +292,10 @@ describe("ConversationManager", () => {
   });
 
   test("should handle API errors gracefully", async () => {
-    const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const mockCreate =
-      vi.mocked(Anthropic).mock.results[0].value.beta.messages.create;
-
-    mockCreate.mockRejectedValueOnce(new Error("API Error"));
+    // FIXED: Mock API to properly reject and ensure error handling works
+    mockAnthropicInstance.beta.messages.create.mockRejectedValueOnce(
+      new Error("API Error")
+    );
 
     const prompt = "This will fail";
     const result = await conversationManager.executeWithTools(
@@ -303,8 +304,10 @@ describe("ConversationManager", () => {
       { maxIterations: 1 }
     );
 
+    // FIXED: Should return failure when API error occurs
     expect(result.success).toBe(false);
     expect(result.error).toBeDefined();
+    expect(result.error?.message).toContain("API Error");
   });
 
   test("should format tools for Claude API correctly", async () => {
@@ -313,9 +316,8 @@ describe("ConversationManager", () => {
       maxIterations: 1,
     });
 
-    const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const mockCreate =
-      vi.mocked(Anthropic).mock.results[0].value.beta.messages.create;
+    // FIXED: Use the stored mock instance instead of trying to access results
+    const mockCreate = mockAnthropicInstance.beta.messages.create;
 
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -351,11 +353,7 @@ describe("ConversationManager", () => {
     };
 
     // Mock multiple tool calls
-    const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const mockCreate =
-      vi.mocked(Anthropic).mock.results[0].value.beta.messages.create;
-
-    mockCreate.mockResolvedValueOnce({
+    mockAnthropicInstance.beta.messages.create.mockResolvedValueOnce({
       content: [
         {
           type: "tool_use",

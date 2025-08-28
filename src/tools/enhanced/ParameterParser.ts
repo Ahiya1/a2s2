@@ -444,17 +444,17 @@ export class ParameterParser {
       throw new Error("File path must be a non-empty string");
     }
 
-    // Track if original path was absolute
-    const wasAbsolute = filePath.startsWith("/");
+    // Trim first, then check if path was absolute
+    const trimmed = filePath.trim();
+    const wasAbsolute = trimmed.startsWith("/");
 
     // Remove dangerous patterns and normalize slashes
-    let sanitized = filePath
+    let sanitized = trimmed
       .replace(/\.\./g, "") // Remove directory traversal
-      .replace(/\/+/g, "/") // Normalize multiple slashes
-      .trim();
+      .replace(/\/+/g, "/"); // Normalize multiple slashes
 
-    // FIXED: Preserve absolute paths - only remove leading slash if it wasn't originally absolute
-    if (sanitized.startsWith("/") && !wasAbsolute) {
+    // FIXED: Only remove leading slash if path wasn't originally absolute
+    if (!wasAbsolute && sanitized.startsWith("/")) {
       sanitized = sanitized.substring(1);
     }
 

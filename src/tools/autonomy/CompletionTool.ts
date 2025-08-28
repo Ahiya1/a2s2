@@ -14,20 +14,38 @@ export interface CompletionReport {
   nextSteps?: string[];
 }
 
-// FIXED: Enhanced transform to handle null inputs properly
+// FIXED: More robust handling of null/undefined arrays with proper preprocessing
 const CompletionSchema = z
   .object({
     summary: z.string().min(10, "Summary must be at least 10 characters"),
-    filesCreated: z.array(z.string()).optional().default([]),
-    filesModified: z.array(z.string()).optional().default([]),
-    testsRun: z.array(z.string()).optional().default([]),
-    validationResults: z.array(z.string()).optional().default([]),
+    filesCreated: z
+      .union([z.array(z.string()), z.null(), z.undefined()])
+      .optional()
+      .default([]),
+    filesModified: z
+      .union([z.array(z.string()), z.null(), z.undefined()])
+      .optional()
+      .default([]),
+    testsRun: z
+      .union([z.array(z.string()), z.null(), z.undefined()])
+      .optional()
+      .default([]),
+    validationResults: z
+      .union([z.array(z.string()), z.null(), z.undefined()])
+      .optional()
+      .default([]),
     success: z.boolean().optional().default(true),
-    nextSteps: z.array(z.string()).optional().default([]),
+    nextSteps: z
+      .union([z.array(z.string()), z.null(), z.undefined()])
+      .optional()
+      .default([]),
   })
   .transform((data) => {
-    // FIXED: Comprehensive null/undefined array handling
+    // FIXED: Comprehensive null/undefined array handling with safe preprocessing
     const safeArray = (value: unknown): string[] => {
+      if (value === null || value === undefined) {
+        return [];
+      }
       if (Array.isArray(value)) {
         return value.filter((item) => typeof item === "string");
       }
@@ -35,11 +53,12 @@ const CompletionSchema = z
     };
 
     return {
-      ...data,
+      summary: data.summary,
       filesCreated: safeArray(data.filesCreated),
       filesModified: safeArray(data.filesModified),
       testsRun: safeArray(data.testsRun),
       validationResults: safeArray(data.validationResults),
+      success: data.success,
       nextSteps: safeArray(data.nextSteps),
     };
   });

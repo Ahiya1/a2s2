@@ -103,99 +103,134 @@ export class ConversationManager {
           }
         );
 
-        // Make API request with error handling
-        const response = await this.errorHandler.executeWithRetry(
-          () => this.makeClaudeRequest(tools, options),
-          `claude_request_${iterationCount}`,
-          { conversationId: this.conversationId, iteration: iterationCount }
-        );
-
-        // Parse response
-        lastResponse = ResponseParser.parse(response);
-
-        // Track costs
-        const costCalculation = this.costOptimizer.calculateCost(
-          lastResponse.usage,
-          this.messageBuilder.estimateTokenCount()
-        );
-        totalCost += costCalculation.totalCost;
-
-        Logger.info(`Iteration ${iterationCount} completed`, {
-          conversationId: this.conversationId,
-          cost: costCalculation.totalCost.toFixed(4),
-          totalCost: totalCost.toFixed(4),
-          toolCalls: lastResponse.toolCalls.length,
-          stopReason: lastResponse.stopReason,
-        });
-
-        // Add assistant response to conversation
-        this.messageBuilder.addAssistantMessage(
-          lastResponse.textContent,
-          lastResponse.thinkingContent
-        );
-
-        // Check for completion
-        if (ResponseParser.isComplete(response)) {
-          Logger.info("Conversation completed naturally", {
-            conversationId: this.conversationId,
-            iterations: iterationCount,
-            totalCost: totalCost.toFixed(4),
-          });
-          break;
-        }
-
-        // Execute tool calls if present
-        if (lastResponse.toolCalls.length > 0) {
-          const toolResults = await this.executeToolCalls(
-            lastResponse.toolCalls,
-            tools
+        try {
+          // Make API request with error handling
+          const response = await this.errorHandler.executeWithRetry(
+            () => this.makeClaudeRequest(tools, options),
+            `claude_request_${iterationCount}`,
+            { conversationId: this.conversationId, iteration: iterationCount }
           );
 
-          // Add tool results to conversation
-          if (toolResults.length === 1) {
-            this.messageBuilder.addToolResult(
-              toolResults[0].toolCall.id,
-              toolResults[0].result
-            );
-          } else {
-            this.messageBuilder.addMultipleToolResults(
-              toolResults.map((tr) => ({
-                toolUseId: tr.toolCall.id,
-                result: tr.result,
-              }))
-            );
+          // Parse response
+          lastResponse = ResponseParser.parse(response);
+
+          // Track costs
+          const costCalculation = this.costOptimizer.calculateCost(
+            lastResponse.usage,
+            this.messageBuilder.estimateTokenCount()
+          );
+          totalCost += costCalculation.totalCost;
+
+          Logger.info(`Iteration ${iterationCount} completed`, {
+            conversationId: this.conversationId,
+            cost: costCalculation.totalCost.toFixed(4),
+            totalCost: totalCost.toFixed(4),
+            toolCalls: lastResponse.toolCalls.length,
+            stopReason: lastResponse.stopReason,
+          });
+
+          // Add assistant response to conversation
+          this.messageBuilder.addAssistantMessage(
+            lastResponse.textContent,
+            lastResponse.thinkingContent
+          );
+
+          // FIXED: Check cost budget BEFORE tool execution to prevent overruns
+          if (options.costBudget && totalCost > options.costBudget) {
+            Logger.warn("Cost budget exceeded", {
+              conversationId: this.conversationId,
+              totalCost: totalCost.toFixed(4),
+              budget: options.costBudget,
+            });
+
+            return {
+              success: false,
+              error: new AnthropicError(
+                "budget_exceeded",
+                `Cost budget of $${options.costBudget} exceeded (actual: $${totalCost.toFixed(4)})`
+              ),
+              iterationCount,
+              totalCost,
+              conversationId: this.conversationId,
+            };
           }
 
-          // Check for completion tool
-          const hasCompletionTool = toolResults.some(
-            (tr) => tr.toolCall.name === "report_complete" && tr.success
-          );
-
-          if (hasCompletionTool) {
-            Logger.info("Conversation completed via completion tool", {
+          // Check for completion
+          if (ResponseParser.isComplete(response)) {
+            Logger.info("Conversation completed naturally", {
               conversationId: this.conversationId,
               iterations: iterationCount,
               totalCost: totalCost.toFixed(4),
             });
             break;
           }
-        }
 
-        // Budget check
-        if (options.costBudget && totalCost > options.costBudget) {
-          Logger.warn("Cost budget exceeded", {
-            conversationId: this.conversationId,
-            totalCost: totalCost.toFixed(4),
-            budget: options.costBudget,
-          });
-          throw new AnthropicError(
-            "budget_exceeded",
-            `Cost budget of $${options.costBudget} exceeded (actual: $${totalCost.toFixed(4)})`
-          );
-        }
+          // Execute tool calls if present
+          if (lastResponse.toolCalls.length > 0) {
+            const toolResults = await this.executeToolCalls(
+              lastResponse.toolCalls,
+              tools
+            );
 
-        // Context management
-        this.messageBuilder.pruneContextIfNeeded(180000);
+            // Add tool results to conversation
+            if (toolResults.length === 1) {
+              this.messageBuilder.addToolResult(
+                toolResults[0].toolCall.id,
+                toolResults[0].result
+              );
+            } else {
+              this.messageBuilder.addMultipleToolResults(
+                toolResults.map((tr) => ({
+                  toolUseId: tr.toolCall.id,
+                  result: tr.result,
+                }))
+              );
+            }
+
+            // Check for completion tool
+            const hasCompletionTool = toolResults.some(
+              (tr) => tr.toolCall.name === "report_complete" && tr.success
+            );
+
+            if (hasCompletionTool) {
+              Logger.info("Conversation completed via completion tool", {
+                conversationId: this.conversationId,
+                iterations: iterationCount,
+                totalCost: totalCost.toFixed(4),
+              });
+              break;
+            }
+          }
+
+          // Context management
+          this.messageBuilder.pruneContextIfNeeded(180000);
+        } catch (error) {
+          // FIXED: Better error handling - catch and classify errors properly
+          const anthropicError =
+            error instanceof AnthropicError
+              ? error
+              : new AnthropicError(
+                  "unknown_error",
+                  (error as Error).message,
+                  undefined,
+                  undefined,
+                  error as Error
+                );
+
+          // If it's a budget exceeded error, return immediately
+          if (anthropicError.code === "budget_exceeded") {
+            return {
+              success: false,
+              error: anthropicError,
+              iterationCount,
+              totalCost,
+              conversationId: this.conversationId,
+            };
+          }
+
+          // For other errors, continue to error handling at end of function
+          throw anthropicError;
+        }
       }
 
       // Handle max iterations reached
@@ -303,7 +338,7 @@ export class ConversationManager {
 
     const results: ToolExecutionResult[] = [];
 
-    // Execute tool calls in parallel for efficiency
+    // FIXED: Execute tool calls in parallel for efficiency
     const executionPromises = toolCalls.map(
       async (toolCall): Promise<ToolExecutionResult> => {
         const tool = tools.find((t) => (t.name || "") === toolCall.name);
@@ -372,6 +407,7 @@ export class ConversationManager {
     return results;
   }
 
+  // FIXED: Tool formatting to match Claude API expectations exactly
   private formatToolsForClaude(tools: Tool[]): any[] {
     return tools.map((tool) => ({
       name: tool.name || "unknown_tool",
