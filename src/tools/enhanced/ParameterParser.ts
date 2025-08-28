@@ -50,6 +50,19 @@ export class ParameterParser {
             originalType,
           };
         }
+
+        // FIXED: Handle empty files array specifically
+        if (
+          (params as any).files &&
+          Array.isArray((params as any).files) &&
+          (params as any).files.length === 0
+        ) {
+          return {
+            success: false,
+            error: "At least one file is required",
+            originalType,
+          };
+        }
       }
 
       // Case 2: JSON string that might contain the object
@@ -68,6 +81,15 @@ export class ParameterParser {
 
       // Case 3: Direct array (wrap in files property)
       if (Array.isArray(params)) {
+        // FIXED: Handle empty array specifically
+        if (params.length === 0) {
+          return {
+            success: false,
+            error: "At least one file is required",
+            originalType,
+          };
+        }
+
         const wrappedParams = { files: params };
         return this.parseFileArray(wrappedParams); // Recursive call
       }
@@ -132,6 +154,19 @@ export class ParameterParser {
             originalType,
           };
         }
+
+        // FIXED: Handle empty array specifically
+        if (
+          (params as any)[fieldName] &&
+          Array.isArray((params as any)[fieldName]) &&
+          (params as any)[fieldName].length === 0
+        ) {
+          return {
+            success: false,
+            error: `At least one ${fieldName.slice(0, -1)} is required`,
+            originalType,
+          };
+        }
       }
 
       // Case 2: JSON string
@@ -150,6 +185,15 @@ export class ParameterParser {
 
       // Case 3: Direct array
       if (Array.isArray(params)) {
+        // FIXED: Handle empty array specifically
+        if (params.length === 0) {
+          return {
+            success: false,
+            error: `At least one ${fieldName.slice(0, -1)} is required`,
+            originalType,
+          };
+        }
+
         const wrappedParams = { [fieldName]: params };
         return this.parseStringArray(wrappedParams, fieldName); // Recursive call
       }
@@ -193,6 +237,15 @@ export class ParameterParser {
             originalType,
           };
         }
+
+        // FIXED: Handle empty command specifically
+        if ((params as any).command === "") {
+          return {
+            success: false,
+            error: "Command cannot be empty",
+            originalType,
+          };
+        }
       }
 
       // Case 2: JSON string
@@ -202,11 +255,19 @@ export class ParameterParser {
           return this.parseCommand(parsed); // Recursive call
         } catch (jsonError) {
           // Maybe it's a direct command string
-          return {
-            success: true,
-            data: { command: params },
-            originalType,
-          };
+          if (params.trim().length > 0) {
+            return {
+              success: true,
+              data: { command: params },
+              originalType,
+            };
+          } else {
+            return {
+              success: false,
+              error: "Command cannot be empty",
+              originalType,
+            };
+          }
         }
       }
 
@@ -383,10 +444,15 @@ export class ParameterParser {
     }
 
     // Remove dangerous patterns
-    const sanitized = filePath
+    let sanitized = filePath
       .replace(/\.\./g, "") // Remove directory traversal
       .replace(/\/+/g, "/") // Normalize multiple slashes
       .trim();
+
+    // FIXED: Remove leading slash if present after removing ../
+    if (sanitized.startsWith("/") && !filePath.startsWith("/")) {
+      sanitized = sanitized.substring(1);
+    }
 
     if (sanitized.length === 0) {
       throw new Error("File path cannot be empty after sanitization");

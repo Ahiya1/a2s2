@@ -1,5 +1,28 @@
 {
-  "name": "test-project",
-  "version": "1.0.0",
-  "description": "E2E test project"
+  "name": "a2s2",
+  "version": "0.1.0",
+  "description": "Autonomous Agent System v2 - Phase 1B Claude Integration",
+  "bin": {
+    "a2s2": "./bin/a2s2.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest watch"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.27.0",
+    "axios": "^1.5.0",
+    "commander": "^11.0.0",
+    "fs-extra": "^11.1.0",
+    "winston": "^3.10.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.0",
+    "@types/node": "^20.4.0",
+    "typescript": "^5.1.0",
+    "vitest": "^1.6.0"
+  }
 }

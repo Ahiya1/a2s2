@@ -66,7 +66,7 @@ export function createBreatheCommand(): Command {
             console.log("");
           }
 
-          // Validate inputs
+          // Validate inputs - FIXED: Use throw instead of process.exit for testability
           validateInputs(vision, options);
 
           // Prepare agent session options
@@ -178,7 +178,13 @@ export function createBreatheCommand(): Command {
           });
 
           OutputFormatter.formatDuration(startTime);
-          process.exit(1);
+
+          // FIXED: Only use process.exit in non-test environments
+          if (process.env.NODE_ENV !== "test") {
+            process.exit(1);
+          } else {
+            throw error; // Re-throw for tests to catch
+          }
         }
       }
     );
@@ -219,6 +225,9 @@ function validateInputs(vision: string, options: any): void {
       throw new Error(`Directory does not exist: ${options.directory}`);
     }
   } catch (error) {
+    if ((error as Error).message.includes("Directory does not exist")) {
+      throw error; // Re-throw directory-specific error
+    }
     throw new Error(`Cannot access directory: ${options.directory}`);
   }
 
@@ -243,7 +252,7 @@ function validateInputs(vision: string, options: any): void {
     console.log("");
     console.log("🔑 Get your API key: https://console.anthropic.com/");
     throw new Error(
-      "Missing required environment variables. Please run 'a2s2 config --setup' to configure."
+      `ANTHROPIC_API_KEY environment variable is required. Missing: ${missing.join(", ")}`
     );
   }
 

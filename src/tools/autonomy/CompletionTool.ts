@@ -14,15 +14,32 @@ export interface CompletionReport {
   nextSteps?: string[];
 }
 
-const CompletionSchema = z.object({
-  summary: z.string().min(10, "Summary must be at least 10 characters"),
-  filesCreated: z.array(z.string()).optional().default([]),
-  filesModified: z.array(z.string()).optional().default([]),
-  testsRun: z.array(z.string()).optional().default([]),
-  validationResults: z.array(z.string()).optional().default([]),
-  success: z.boolean().optional().default(true),
-  nextSteps: z.array(z.string()).optional().default([]),
-});
+// FIXED: Made arrays optional but with default values to handle null inputs
+const CompletionSchema = z
+  .object({
+    summary: z.string().min(10, "Summary must be at least 10 characters"),
+    filesCreated: z.array(z.string()).optional().default([]),
+    filesModified: z.array(z.string()).optional().default([]),
+    testsRun: z.array(z.string()).optional().default([]),
+    validationResults: z.array(z.string()).optional().default([]),
+    success: z.boolean().optional().default(true),
+    nextSteps: z.array(z.string()).optional().default([]),
+  })
+  .transform((data) => {
+    // FIXED: Ensure null arrays are converted to empty arrays
+    return {
+      ...data,
+      filesCreated: Array.isArray(data.filesCreated) ? data.filesCreated : [],
+      filesModified: Array.isArray(data.filesModified)
+        ? data.filesModified
+        : [],
+      testsRun: Array.isArray(data.testsRun) ? data.testsRun : [],
+      validationResults: Array.isArray(data.validationResults)
+        ? data.validationResults
+        : [],
+      nextSteps: Array.isArray(data.nextSteps) ? data.nextSteps : [],
+    };
+  });
 
 export class CompletionTool implements Tool {
   name = "report_complete";

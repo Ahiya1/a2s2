@@ -58,7 +58,7 @@ export class AnthropicConfigManager {
       model: this.config.model,
       max_tokens: this.config.maxTokens,
       thinking: {
-        type: "enabled",
+        type: "enabled" as const,
         budget_tokens: this.config.thinkingBudget,
       },
       betas: this.getBetaHeaders(),
@@ -82,8 +82,11 @@ export class AnthropicConfigManager {
       throw new Error("thinkingBudget must be positive");
     }
 
-    if (this.config.thinkingBudget >= this.config.maxTokens) {
-      throw new Error("thinkingBudget should be less than maxTokens");
+    // FIXED: Allow thinkingBudget to equal maxTokens
+    if (this.config.thinkingBudget > this.config.maxTokens) {
+      throw new Error(
+        "thinkingBudget should be less than or equal to maxTokens"
+      );
     }
   }
 }

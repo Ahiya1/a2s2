@@ -61,7 +61,7 @@ export class AgentSession {
   constructor(options: AgentSessionOptions) {
     this.sessionId = this.generateSessionId();
 
-    // FIXED: Validate API key first before proceeding
+    // Validate API key first before proceeding
     if (!process.env.ANTHROPIC_API_KEY) {
       throw new Error("ANTHROPIC_API_KEY environment variable is required");
     }
@@ -69,7 +69,7 @@ export class AgentSession {
     // Initialize conversation manager with Claude 4 Sonnet
     const configManager = new AnthropicConfigManager({
       enableExtendedContext: options.enableExtendedContext || false,
-      enableWebSearch: options.enableWebSearch || true,
+      enableWebSearch: options.enableWebSearch !== false, // Default to true
     });
 
     this.conversationManager = new ConversationManager(
@@ -81,7 +81,7 @@ export class AgentSession {
     this.setupAutonomyTools();
 
     // Setup web search if enabled
-    if (options.enableWebSearch) {
+    if (options.enableWebSearch !== false) {
       this.setupWebSearch();
     }
 
@@ -124,7 +124,7 @@ export class AgentSession {
       // Get all available tools
       const tools = this.getAllTools();
 
-      // Configure conversation options
+      // Configure conversation options with proper cost budget handling
       const conversationOptions: ConversationOptions = {
         maxIterations: options.maxIterations || 50,
         costBudget: options.costBudget || 50.0,
@@ -143,6 +143,13 @@ export class AgentSession {
       this.metrics.iterationCount = result.iterationCount;
       this.metrics.totalCost = result.totalCost;
 
+      // Count tool calls from conversation
+      const summary = this.conversationManager.getConversationSummary();
+      this.metrics.toolCallsCount = Object.values(summary.toolUsage).reduce(
+        (sum, count) => sum + count,
+        0
+      );
+
       Logger.info("Agent execution completed", {
         sessionId: this.sessionId,
         success: result.success,
@@ -151,10 +158,13 @@ export class AgentSession {
         duration: `${(Date.now() - startTime) / 1000}s`,
       });
 
-      // FIXED: Return the actual result.success instead of hardcoding
+      // Return actual success status, ensuring result is considered successful
+      // if we completed iterations without errors
+      const success = result.success && result.error === undefined;
+
       return {
-        success: result.success,
-        finalPhase: this.phaseReportingTool.getCurrentPhase() || "EXPLORE",
+        success,
+        finalPhase: this.phaseReportingTool.getCurrentPhase() || "COMPLETE",
         completionReport: this.isCompleted
           ? this.getCompletionReport()
           : undefined,
@@ -174,7 +184,7 @@ export class AgentSession {
 
       return {
         success: false,
-        finalPhase: this.phaseReportingTool.getCurrentPhase() || "EXPLORE",
+        finalPhase: this.phaseReportingTool?.getCurrentPhase() || "EXPLORE",
         iterationCount: this.metrics.iterationCount,
         totalCost: this.metrics.totalCost,
         sessionId: this.sessionId,
@@ -345,9 +355,9 @@ export class AgentSession {
       totalCost: this.metrics.totalCost,
       filesCreated: this.metrics.filesCreated,
       filesModified: this.metrics.filesModified,
-      finalPhase: this.phaseReportingTool.getCurrentPhase(),
-      phaseStats: this.phaseReportingTool.getPhaseStats(),
-      continuationStats: this.continuationTool.getContinuationStats(),
+      finalPhase: this.phaseReportingTool?.getCurrentPhase(),
+      phaseStats: this.phaseReportingTool?.getPhaseStats(),
+      continuationStats: this.continuationTool?.getContinuationStats(),
       webSearchStats: this.webSearchTool?.getSearchStats(),
     };
   }
@@ -366,7 +376,7 @@ export class AgentSession {
   }
 
   getCurrentPhase(): AgentPhase {
-    return this.phaseReportingTool.getCurrentPhase() || "EXPLORE";
+    return this.phaseReportingTool?.getCurrentPhase() || "EXPLORE";
   }
 
   isSessionCompleted(): boolean {
@@ -375,8 +385,15 @@ export class AgentSession {
 
   // Cleanup method
   cleanup(): void {
-    this.completionTool.removeCompletionCallback(() => {});
-    this.conversationManager.clear();
-    Logger.info("Agent session cleaned up", { sessionId: this.sessionId });
+    try {
+      this.completionTool?.removeCompletionCallback(() => {});
+      this.conversationManager?.clear();
+      Logger.info("Agent session cleaned up", { sessionId: this.sessionId });
+    } catch (error) {
+      Logger.warn("Error during cleanup", {
+        sessionId: this.sessionId,
+        error: (error as Error).message,
+      });
+    }
   }
 }

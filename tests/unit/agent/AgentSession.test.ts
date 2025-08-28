@@ -5,34 +5,114 @@ import {
 } from "../../../src/agent/AgentSession";
 import { TestUtils } from "../../helpers/TestUtils";
 
-// Mock the Anthropic API
-vi.mock("anthropic", () => ({
+// FIXED: Mock the correct Anthropic SDK import and provide realistic autonomous responses
+vi.mock("@anthropic-ai/sdk", () => ({
   default: vi.fn().mockImplementation(() => ({
     beta: {
       messages: {
-        create: vi.fn().mockResolvedValue({
-          content: [
-            {
-              type: "text",
-              text: "I'll help you create a README.md file for this project.",
-            },
-            {
-              type: "tool_use",
-              id: "tool_1",
-              name: "report_complete",
-              input: {
-                summary: "Created README.md file successfully",
-                filesCreated: ["README.md"],
-                success: true,
+        create: vi.fn().mockImplementation(async (request) => {
+          // Simulate autonomous conversation flow
+          const lastMessage = request.messages[request.messages.length - 1];
+          let content = "";
+
+          if (typeof lastMessage.content === "string") {
+            content = lastMessage.content;
+          } else if (Array.isArray(lastMessage.content)) {
+            content = lastMessage.content
+              .filter((block) => block.type === "text" || block.text)
+              .map((block) => block.text || block.content || "")
+              .join(" ");
+          }
+
+          // Check if this is a tool result (agent continuing conversation)
+          const isToolResult =
+            Array.isArray(lastMessage.content) &&
+            lastMessage.content.some((block) => block.type === "tool_result");
+
+          // If it's a tool result, complete the task
+          if (isToolResult) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Task completed successfully based on tool results.",
+                },
+                {
+                  type: "tool_use",
+                  id: `complete_${Date.now()}`,
+                  name: "report_complete",
+                  input: {
+                    summary: "Successfully completed the requested task",
+                    filesCreated: ["README.md"],
+                    success: true,
+                  },
+                },
+              ],
+              stop_reason: "tool_use",
+              usage: {
+                input_tokens: 500,
+                output_tokens: 100,
+                thinking_tokens: 50,
               },
+            };
+          }
+
+          // Initial request - start autonomous execution
+          if (
+            content.includes("README") ||
+            content.includes("Begin autonomous execution")
+          ) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "I'll create a README.md file for this project.",
+                },
+                {
+                  type: "tool_use",
+                  id: `write_readme_${Date.now()}`,
+                  name: "write_files",
+                  input: {
+                    files: [
+                      {
+                        path: "README.md",
+                        content:
+                          "# Test Project\n\nThis project was created during agent testing.\n",
+                      },
+                    ],
+                  },
+                },
+              ],
+              stop_reason: "tool_use",
+              usage: {
+                input_tokens: 1000,
+                output_tokens: 150,
+                thinking_tokens: 100,
+              },
+            };
+          }
+
+          // Default autonomous response - agent starts working
+          return {
+            content: [
+              {
+                type: "text",
+                text: "I'll begin working on this task autonomously.",
+              },
+              {
+                type: "tool_use",
+                id: `start_${Date.now()}`,
+                name: "get_project_tree",
+                input: { path: "." },
+              },
+            ],
+            stop_reason: "tool_use",
+            usage: {
+              input_tokens: 800,
+              output_tokens: 120,
+              thinking_tokens: 80,
             },
-          ],
-          stop_reason: "tool_use",
-          usage: {
-            input_tokens: 1000,
-            output_tokens: 200,
-            thinking_tokens: 100,
-          },
+          };
         }),
       },
     },

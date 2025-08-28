@@ -171,7 +171,7 @@ export class MockClaudeAPI {
     this.responseIndex = 0;
   }
 
-  // Create a mock Anthropic SDK instance
+  // Create a mock Anthropic SDK instance - FIXED IMPORT MISMATCH
   createMockSDK() {
     const mockAPI = this;
 
