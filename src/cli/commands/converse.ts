@@ -6,7 +6,9 @@ import { EnvLoader } from "../../config/EnvLoader";
 
 export function createConverseCommand(): Command {
   return new Command("converse")
-    .description("Interactive conversation mode - chat directly with Claude agent with tool access")
+    .description(
+      "Interactive conversation mode - chat directly with Claude agent with tool access"
+    )
     .option(
       "--directory <dir>",
       "Working directory for analysis and execution",
@@ -34,7 +36,9 @@ export function createConverseCommand(): Command {
             console.log(`  Directory: ${options.directory}`);
             console.log(`  Verbose: ${options.verbose}`);
             console.log(`  Web Search: ${options.webSearch}`);
-            console.log(`  Cost Budget: ${options.costBudget ? '$' + options.costBudget.toFixed(2) : 'None'}`);
+            console.log(
+              `  Cost Budget: ${options.costBudget ? "$" + options.costBudget.toFixed(2) : "None"}`
+            );
             console.log("");
           }
 
@@ -55,25 +59,32 @@ export function createConverseCommand(): Command {
           OutputFormatter.formatHeader("a2s2 Interactive Agent Conversation");
 
           // Start interactive conversation
-          const result = await interactiveManager.startInteractiveConversation();
+          const result =
+            await interactiveManager.startInteractiveConversation();
 
           if (result.success) {
             OutputFormatter.formatSuccess(
               "Conversation completed successfully!"
             );
-            
+
             console.log("");
             console.log("📊 Session Summary:");
             console.log(`  • Conversation ID: ${result.conversationId}`);
             console.log(`  • Messages exchanged: ${result.messageCount}`);
             console.log(`  • Total cost: $${result.totalCost.toFixed(4)}`);
-            console.log(`  • Duration: ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
-            
+            console.log(
+              `  • Duration: ${((Date.now() - startTime) / 1000).toFixed(1)}s`
+            );
+
             // Offer next steps
             console.log("");
             console.log("✨ What's next?");
-            console.log("  • Run 'a2s2 converse' again to start a new conversation");
-            console.log("  • Use 'a2s2 breathe \"<your task>\"' for autonomous execution");
+            console.log(
+              "  • Run 'a2s2 converse' again to start a new conversation"
+            );
+            console.log(
+              "  • Use 'a2s2 breathe \"<your task>\"' for autonomous execution"
+            );
             console.log("  • Check 'a2s2 --help' for other available commands");
           } else {
             OutputFormatter.formatError("Conversation failed or was cancelled");

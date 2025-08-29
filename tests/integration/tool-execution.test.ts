@@ -101,7 +101,7 @@ describe('helpers', () => {
       ".gitignore": "node_modules/\ndist/\n*.log",
     });
 
-    const result = await toolManager.executeTool("get_project_tree", {
+    const result = await toolManager.executeToolForResult("get_project_tree", {
       path: tempDir,
     });
 
@@ -114,9 +114,12 @@ describe('helpers', () => {
 
   test("should execute file operations in realistic workflow", async () => {
     // Step 1: Analyze empty directory
-    const initialTree = await toolManager.executeTool("get_project_tree", {
-      path: tempDir,
-    });
+    const initialTree = await toolManager.executeToolForResult(
+      "get_project_tree",
+      {
+        path: tempDir,
+      }
+    );
     expect(initialTree).toBeDefined();
 
     // Step 2: Create initial files
@@ -151,22 +154,25 @@ describe('helpers', () => {
       },
     ];
 
-    const writeResult = await toolManager.executeTool("write_files", {
+    const writeResult = await toolManager.executeToolForResult("write_files", {
       files: initialFiles,
     });
     expect(writeResult).toContain("3/3 files written successfully");
 
     // Step 3: Verify files were created
-    const verifyTree = await toolManager.executeTool("get_project_tree", {
-      path: tempDir,
-    });
+    const verifyTree = await toolManager.executeToolForResult(
+      "get_project_tree",
+      {
+        path: tempDir,
+      }
+    );
     expect(verifyTree).toContain("package.json");
     expect(verifyTree).toContain("index.js");
     expect(verifyTree).toContain("config.json");
 
     // Step 4: Read files back
     const filePaths = initialFiles.map((f) => f.path);
-    const readResult = await toolManager.executeTool("read_files", {
+    const readResult = await toolManager.executeToolForResult("read_files", {
       paths: filePaths,
     });
 
@@ -175,7 +181,7 @@ describe('helpers', () => {
     expect(readResult).toContain("development");
 
     // Step 5: Test shell command execution
-    const nodeResult = await toolManager.executeTool("run_command", {
+    const nodeResult = await toolManager.executeToolForResult("run_command", {
       command: `cd "${tempDir}" && node index.js`,
     });
     expect(nodeResult).toContain("Hello from workflow test!");
@@ -194,7 +200,7 @@ describe('helpers', () => {
     }
 
     // Write all files
-    const writeResult = await toolManager.executeTool("write_files", {
+    const writeResult = await toolManager.executeToolForResult("write_files", {
       files: files,
     });
     expect(writeResult).toContain(
@@ -203,7 +209,7 @@ describe('helpers', () => {
 
     // Read a subset of files
     const readPaths = files.slice(0, 10).map((f) => f.path);
-    const readResult = await toolManager.executeTool("read_files", {
+    const readResult = await toolManager.executeToolForResult("read_files", {
       paths: readPaths,
     });
 
@@ -211,9 +217,12 @@ describe('helpers', () => {
     expect(readResult).toContain("file number 9");
 
     // Verify project structure includes all files
-    const treeResult = await toolManager.executeTool("get_project_tree", {
-      path: tempDir,
-    });
+    const treeResult = await toolManager.executeToolForResult(
+      "get_project_tree",
+      {
+        path: tempDir,
+      }
+    );
 
     expect(treeResult).toContain("file_000.txt");
     expect(treeResult).toContain("file_024.txt");
@@ -240,7 +249,7 @@ describe('helpers', () => {
     ];
 
     for (const command of commands) {
-      const result = await toolManager.executeTool("run_command", {
+      const result = await toolManager.executeToolForResult("run_command", {
         command,
         timeout: 10000,
       });
@@ -253,7 +262,7 @@ describe('helpers', () => {
     // Test file operations with errors
 
     // 1. Try to read non-existent files
-    const readResult = await toolManager.executeTool("read_files", {
+    const readResult = await toolManager.executeToolForResult("read_files", {
       paths: [
         path.join(tempDir, "does-not-exist.txt"),
         path.join(tempDir, "also-missing.js"),
@@ -263,7 +272,7 @@ describe('helpers', () => {
 
     // 2. Try to run invalid shell command
     try {
-      await toolManager.executeTool("run_command", {
+      await toolManager.executeToolForResult("run_command", {
         command: "this-command-definitely-does-not-exist-12345",
       });
       // Should not reach here
@@ -281,7 +290,7 @@ describe('helpers', () => {
     ];
 
     try {
-      await toolManager.executeTool("write_files", {
+      await toolManager.executeToolForResult("write_files", {
         files: protectedFiles,
       });
       // If it succeeds, that's fine too (some systems allow this)
@@ -312,7 +321,7 @@ describe('helpers', () => {
     ];
 
     try {
-      await toolManager.executeTool("write_files", {
+      await toolManager.executeToolForResult("write_files", {
         files: mixedFiles,
       });
     } catch (error) {
@@ -325,8 +334,8 @@ describe('helpers', () => {
   test("should handle concurrent tool executions", async () => {
     // Create multiple independent operations
     const operations = [
-      toolManager.executeTool("get_project_tree", { path: tempDir }),
-      toolManager.executeTool("write_files", {
+      toolManager.executeToolForResult("get_project_tree", { path: tempDir }),
+      toolManager.executeToolForResult("write_files", {
         files: [
           {
             path: path.join(tempDir, "concurrent1.txt"),
@@ -334,7 +343,7 @@ describe('helpers', () => {
           },
         ],
       }),
-      toolManager.executeTool("write_files", {
+      toolManager.executeToolForResult("write_files", {
         files: [
           {
             path: path.join(tempDir, "concurrent2.txt"),
@@ -342,7 +351,7 @@ describe('helpers', () => {
           },
         ],
       }),
-      toolManager.executeTool("run_command", {
+      toolManager.executeToolForResult("run_command", {
         command: "echo 'Concurrent command execution'",
       }),
     ];
@@ -398,13 +407,13 @@ describe('helpers', () => {
     toolManager.registerTool("custom_processor", customTool);
 
     // Test custom tool execution
-    const result1 = await toolManager.executeTool("custom_processor", {
+    const result1 = await toolManager.executeToolForResult("custom_processor", {
       input: "hello world",
       operation: "uppercase",
     });
     expect(result1).toBe("Processed: HELLO WORLD");
 
-    const result2 = await toolManager.executeTool("custom_processor", {
+    const result2 = await toolManager.executeToolForResult("custom_processor", {
       input: "integration",
       operation: "reverse",
     });

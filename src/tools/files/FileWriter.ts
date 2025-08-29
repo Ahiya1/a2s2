@@ -1,7 +1,6 @@
 import { FileWriterSchema, FileWriterParams } from "../schemas/ToolSchemas";
 import { FileUtils } from "../../utils/FileUtils";
 import { Logger } from "../../logging/Logger";
-import * as fs from "fs-extra";
 import * as path from "path";
 
 interface WriteResult {
@@ -11,8 +10,6 @@ interface WriteResult {
 }
 
 export class FileWriter {
-  private backupDir: string = ".a2s2-backup";
-
   async execute(params: unknown): Promise<string> {
     const validatedParams = this.validateParams(params);
     return this.write_files(validatedParams);
@@ -21,36 +18,60 @@ export class FileWriter {
   async write_files(params: FileWriterParams): Promise<string> {
     const { files } = params;
 
-    Logger.info(`Writing files`, { fileCount: files.length });
+    Logger.info(`Writing files with atomicity`, { fileCount: files.length });
 
-    const backupId = this.generateBackupId();
     const results: WriteResult[] = [];
+    const backupInfo: Array<{
+      path: string;
+      originalContent?: string;
+      existed: boolean;
+    }> = [];
 
     try {
-      // Create backup of existing files
-      await this.createBackup(
-        files.map((f) => f.path),
-        backupId
-      );
+      // Phase 1: Create backups of existing files
+      for (const file of files) {
+        const resolvedPath = FileUtils.resolvePath(file.path);
+        const exists = await FileUtils.exists(resolvedPath);
 
-      // Write files atomically
-      const writePromises = files.map(async (file) => {
+        if (exists) {
+          const originalContent = await FileUtils.readFile(resolvedPath);
+          backupInfo.push({
+            path: resolvedPath,
+            originalContent,
+            existed: true,
+          });
+        } else {
+          backupInfo.push({ path: resolvedPath, existed: false });
+        }
+      }
+
+      // Phase 2: Write all files
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
         try {
           const resolvedPath = FileUtils.resolvePath(file.path);
 
-          // Write to temporary file first
-          const tempPath = `${resolvedPath}.tmp`;
-          await FileUtils.writeFile(tempPath, file.content);
+          // Ensure parent directory exists
+          const parentDir = path.dirname(resolvedPath);
+          await FileUtils.ensureDir(parentDir);
 
-          // Atomic rename
-          await fs.rename(tempPath, resolvedPath);
+          // Write file
+          await FileUtils.writeFile(resolvedPath, file.content);
+
+          // Verify write
+          const exists = await FileUtils.exists(resolvedPath);
+          if (!exists) {
+            throw new Error(
+              `File verification failed: ${resolvedPath} was not created`
+            );
+          }
 
           Logger.debug(`Successfully wrote file`, {
             path: file.path,
             size: file.content.length,
           });
 
-          return { path: file.path, success: true };
+          results.push({ path: file.path, success: true });
         } catch (error: unknown) {
           const errorMessage =
             error instanceof Error ? error.message : String(error);
@@ -58,129 +79,69 @@ export class FileWriter {
             path: file.path,
             error: errorMessage,
           });
-          return { path: file.path, success: false, error: errorMessage };
-        }
-      });
-
-      const writeResults = await Promise.allSettled(writePromises);
-
-      writeResults.forEach((result, index) => {
-        if (result.status === "fulfilled") {
-          results.push(result.value);
-        } else {
           results.push({
-            path: files[index].path,
+            path: file.path,
             success: false,
-            error: String(result.reason),
+            error: errorMessage,
           });
+
+          // Atomicity: if any file fails, we need to rollback
+          throw error;
         }
-      });
-
-      const successCount = results.filter((r) => r.success).length;
-      const failureCount = results.length - successCount;
-
-      if (failureCount > 0) {
-        Logger.warn(`Some files failed to write, rolling back`, {
-          successful: successCount,
-          failed: failureCount,
-        });
-        await this.rollback(
-          files.map((f) => f.path),
-          backupId
-        );
-        throw new Error(`${failureCount} files failed to write`);
       }
 
-      // Commit changes by removing backup
-      await this.commitChanges(backupId);
-
+      // Phase 3: All files written successfully
+      const successCount = results.filter((r) => r.success).length;
       Logger.info(`All files written successfully`, {
-        fileCount: files.length,
+        fileCount: successCount,
       });
 
       return this.formatResults(results);
     } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      Logger.error(`File writing operation failed, attempting rollback`, {
-        error: errorMessage,
+      // Phase 4: Rollback on any failure
+      Logger.warn(`File write failed, rolling back all changes`, {
+        successful: results.filter((r) => r.success).length,
+        total: files.length,
       });
 
-      try {
-        await this.rollback(
-          files.map((f) => f.path),
-          backupId
-        );
-      } catch (rollbackError) {
-        Logger.error(`Rollback failed`, { error: String(rollbackError) });
+      for (const backup of backupInfo) {
+        try {
+          if (backup.existed && backup.originalContent !== undefined) {
+            // Restore original file
+            await FileUtils.writeFile(backup.path, backup.originalContent);
+            Logger.debug(`Restored original file`, { path: backup.path });
+          } else if (!backup.existed) {
+            // Remove newly created file
+            const exists = await FileUtils.exists(backup.path);
+            if (exists) {
+              await FileUtils.remove(backup.path);
+              Logger.debug(`Removed newly created file`, { path: backup.path });
+            }
+          }
+        } catch (rollbackError) {
+          Logger.error(`Failed to rollback file`, {
+            path: backup.path,
+            error: String(rollbackError),
+          });
+        }
       }
 
-      throw new Error(`File writing failed: ${errorMessage}`);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      throw new Error(`File writing failed with rollback: ${errorMessage}`);
     }
-  }
-
-  private async createBackup(
-    filePaths: string[],
-    backupId: string
-  ): Promise<void> {
-    const backupPath = FileUtils.joinPath(this.backupDir, backupId);
-    await FileUtils.ensureDir(backupPath);
-
-    for (const filePath of filePaths) {
-      const resolvedPath = FileUtils.resolvePath(filePath);
-      const exists = await FileUtils.exists(resolvedPath);
-
-      if (exists) {
-        const backupFilePath = FileUtils.joinPath(
-          backupPath,
-          path.basename(filePath)
-        );
-        await FileUtils.copyFile(resolvedPath, backupFilePath);
-      }
-    }
-  }
-
-  private async rollback(filePaths: string[], backupId: string): Promise<void> {
-    const backupPath = FileUtils.joinPath(this.backupDir, backupId);
-    const backupExists = await FileUtils.exists(backupPath);
-
-    if (!backupExists) {
-      return;
-    }
-
-    for (const filePath of filePaths) {
-      const resolvedPath = FileUtils.resolvePath(filePath);
-      const backupFilePath = FileUtils.joinPath(
-        backupPath,
-        path.basename(filePath)
-      );
-      const backupFileExists = await FileUtils.exists(backupFilePath);
-
-      if (backupFileExists) {
-        await FileUtils.copyFile(backupFilePath, resolvedPath);
-      }
-    }
-
-    await fs.remove(backupPath);
-  }
-
-  private async commitChanges(backupId: string): Promise<void> {
-    const backupPath = FileUtils.joinPath(this.backupDir, backupId);
-    const exists = await FileUtils.exists(backupPath);
-
-    if (exists) {
-      await fs.remove(backupPath);
-    }
-  }
-
-  private generateBackupId(): string {
-    return `backup_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 
   private formatResults(results: WriteResult[]): string {
     const successful = results.filter((r) => r.success);
     const failed = results.filter((r) => !r.success);
 
+    // Match test expectations for success message format
+    if (failed.length === 0) {
+      return `${successful.length}/${results.length} files written successfully\n\n✅ All files written successfully:\n${successful.map((s) => `✅ ${s.path}`).join("\n")}`;
+    }
+
+    // For mixed results, provide detailed breakdown
     const summary = `File operation completed: ${successful.length}/${results.length} files written successfully`;
 
     const details = results
@@ -191,11 +152,7 @@ export class FileWriter {
       )
       .join("\n");
 
-    if (failed.length > 0) {
-      return `${summary}\n\n❌ Errors:\n${failed.map((f) => `${f.path}: ${f.error}`).join("\n")}\n\n✅ Successful:\n${successful.map((s) => s.path).join("\n")}`;
-    }
-
-    return `${summary}\n\n✅ All files written successfully:\n${details}`;
+    return `${summary}\n\n❌ Errors:\n${failed.map((f) => `${f.path}: ${f.error}`).join("\n")}\n\n✅ Successful:\n${successful.map((s) => s.path).join("\n")}`;
   }
 
   private validateParams(params: unknown): FileWriterParams {

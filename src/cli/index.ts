@@ -43,7 +43,7 @@ export function createCLI(): Command {
   program.addCommand(createContinueCommand());
   program.addCommand(createStatusCommand());
   
-  // Interactive conversation mode
+  // Limited conversation mode (NEW: Updated with breathe functionality)
   program.addCommand(createConverseCommand());
 
   // Configuration command
@@ -73,42 +73,7 @@ export function createCLI(): Command {
   // Custom help sections
   program.addHelpText(
     "after",
-    `
-Examples:
-  # Quick setup (first time users)
-  $ a2s2 config --setup
-
-  # Foundation tools (Phase 1A)
-  $ a2s2 analyze ./my-project --foundation
-  $ a2s2 read src/App.jsx src/utils.js
-  $ a2s2 validate --tools
-
-  # Autonomous agent (Phase 1B)
-  $ a2s2 breathe "Create a React todo app with TypeScript"
-  $ a2s2 continue "Add tests and improve error handling"
-  $ a2s2 status --detailed --health-check
-  
-  # Interactive conversation mode
-  $ a2s2 converse                # Chat with agent before autonomous execution
-
-  # Configuration
-  $ a2s2 config --status      # Check current setup
-  $ a2s2 config --help-env    # Detailed setup instructions
-
-Environment Setup:
-  The easiest way to get started is with the interactive setup:
-    $ a2s2 config --setup
-
-  Or manually set your API key in any of these locations:
-    ~/.a2s2.env              # Recommended for global use
-    ./.env                   # Project-specific
-    export ANTHROPIC_API_KEY # System environment
-
-  Get your API key from: https://console.anthropic.com/
-
-Documentation:
-  Visit https://github.com/your-org/a2s2 for complete documentation
-`
+    `\nExamples:\n  # Quick setup (first time users)\n  $ a2s2 config --setup\n\n  # Foundation tools (Phase 1A)\n  $ a2s2 analyze ./my-project --foundation\n  $ a2s2 read src/App.jsx src/utils.js\n  $ a2s2 validate --tools\n\n  # Autonomous agent (Phase 1B)\n  $ a2s2 breathe "Create a React todo app with TypeScript"\n  $ a2s2 continue "Add tests and improve error handling"\n  $ a2s2 status --detailed --health-check\n  \n  # NEW: Limited conversation mode with breathe functionality\n  $ a2s2 converse                               # Chat with limited agent\n  $ a2s2 converse --conversation-id <id>        # Resume conversation\n  $ a2s2 converse --list-conversations          # List saved conversations\n  $ a2s2 converse --clean-expired               # Clean up old conversations\n  \n  # During conversation, type 'breathe' to synthesize and execute!\n\nConversation Agent Changes:\n  NEW: Conversation and execution agents are now SEPARATED!\n  \n  • 'a2s2 converse' starts a LIMITED conversation agent\n  • It can ONLY read files and analyze projects (no writing/execution)\n  • Type 'breathe' during conversation to synthesize and execute autonomously\n  • Conversations are automatically saved and can be resumed\n  • No more re-analysis of projects when continuing conversations!\n\nEnvironment Setup:\n  The easiest way to get started is with the interactive setup:\n    $ a2s2 config --setup\n\n  Or manually set your API key in any of these locations:\n    ~/.a2s2.env              # Recommended for global use\n    ./.env                   # Project-specific\n    export ANTHROPIC_API_KEY # System environment\n\n  Get your API key from: https://console.anthropic.com/\n\nDocumentation:\n  Visit https://github.com/your-org/a2s2 for complete documentation\n`
   );
 
   // Global error handling

@@ -25,7 +25,9 @@ export interface ConversationOptions {
   enablePromptCaching?: boolean;
   maxIterations?: number;
   costBudget?: number;
-  // NEW: Streaming options
+  // NEW: Conversational mode flag
+  useConversationalMode?: boolean;
+  // Streaming options
   enableStreaming?: boolean;
   streamingOptions?: StreamingOptions;
   onProgress?: (progress: StreamingProgress) => void;
@@ -40,7 +42,7 @@ export interface ConversationResult {
   iterationCount: number;
   totalCost: number;
   conversationId: string;
-  // NEW: Streaming results
+  // Streaming results
   wasStreamed?: boolean;
   streamingDuration?: number;
 }
@@ -102,16 +104,40 @@ export class ConversationManager {
       promptLength: prompt.length,
       maxIterations,
       streamingEnabled: enableStreaming,
+      conversationalMode: options.useConversationalMode || false,
     });
 
     try {
-      // Build initial system message
-      const systemMessage = this.messageBuilder.buildSystemPrompt({
-        vision: prompt,
-        workingDirectory: process.cwd(),
-        tools,
-        context: this.gatherAdditionalContext(),
-      });
+      // Build appropriate system message based on mode
+      let systemMessage: ConversationMessage;
+
+      if (options.useConversationalMode) {
+        // CONVERSATIONAL MODE: Use conversational system prompt
+        systemMessage = this.messageBuilder.buildConversationalSystemPrompt({
+          workingDirectory: process.cwd(),
+          tools,
+          context: this.gatherAdditionalContext(),
+          userGoal: prompt,
+        });
+
+        Logger.debug("Using conversational system prompt", {
+          conversationId: this.conversationId,
+          promptLength: prompt.length,
+        });
+      } else {
+        // AUTONOMOUS MODE: Use autonomous system prompt (existing behavior)
+        systemMessage = this.messageBuilder.buildSystemPrompt({
+          vision: prompt,
+          workingDirectory: process.cwd(),
+          tools,
+          context: this.gatherAdditionalContext(),
+        });
+
+        Logger.debug("Using autonomous system prompt", {
+          conversationId: this.conversationId,
+          vision: prompt.substring(0, 100) + "...",
+        });
+      }
 
       let totalCost = 0;
       let lastResponse: ParsedResponse | undefined;
@@ -126,6 +152,7 @@ export class ConversationManager {
           {
             conversationId: this.conversationId,
             streaming: enableStreaming,
+            conversationalMode: options.useConversationalMode || false,
           }
         );
 
@@ -196,6 +223,7 @@ export class ConversationManager {
             stopReason: lastResponse.stopReason,
             streamed: enableStreaming,
             streamingDuration: streamingDuration,
+            conversationalMode: options.useConversationalMode || false,
           });
 
           // Add assistant response to conversation with preserved thinking blocks
@@ -220,6 +248,7 @@ export class ConversationManager {
               iterations: iterationCount,
               totalCost: totalCost.toFixed(4),
               totalStreamingDuration,
+              conversationalMode: options.useConversationalMode || false,
             });
             break;
           }
@@ -262,6 +291,20 @@ export class ConversationManager {
             }
           }
 
+          // In conversational mode, stop after one complete interaction
+          // (Claude's response + any tool calls executed)
+          if (
+            options.useConversationalMode &&
+            lastResponse.toolCalls.length === 0
+          ) {
+            Logger.info("Conversational turn completed", {
+              conversationId: this.conversationId,
+              iterations: iterationCount,
+              totalCost: totalCost.toFixed(4),
+            });
+            break;
+          }
+
           // Context management
           this.messageBuilder.pruneContextIfNeeded(180000);
         } catch (iterationError) {
@@ -297,6 +340,7 @@ export class ConversationManager {
           maxIterations,
           totalCost: totalCost.toFixed(4),
           totalStreamingDuration,
+          conversationalMode: options.useConversationalMode || false,
         });
       }
 
@@ -308,6 +352,7 @@ export class ConversationManager {
         totalCost: totalCost.toFixed(4),
         streamingDuration: totalStreamingDuration,
         success: true,
+        conversationalMode: options.useConversationalMode || false,
       });
 
       return {
@@ -560,17 +605,47 @@ export class ConversationManager {
             parameters: toolCall.parameters,
           });
 
-          const result = await tool.execute(toolCall.parameters);
+          const toolResult = await tool.execute(toolCall.parameters);
+
+          // FIXED: Handle both wrapped ToolManager responses and direct responses
+          let resultString: string;
+          let wasSuccessful = true;
+
+          if (
+            typeof toolResult === "object" &&
+            toolResult !== null &&
+            "success" in toolResult
+          ) {
+            // This is a wrapped response from ToolManager.executeTool()
+            wasSuccessful = Boolean(toolResult.success);
+
+            if (toolResult.success) {
+              resultString = String(toolResult.result || "");
+            } else {
+              // Handle error case - send the error message back to the agent
+              resultString =
+                toolResult.error?.message ||
+                String(toolResult.error) ||
+                "Tool execution failed";
+            }
+          } else if (typeof toolResult === "string") {
+            // Direct string response
+            resultString = toolResult;
+          } else {
+            // Fallback: convert to string
+            resultString = String(toolResult);
+          }
 
           Logger.debug(`Tool executed successfully: ${toolCall.name}`, {
             conversationId: this.conversationId,
-            resultLength: result.length,
+            resultLength: resultString.length,
+            success: wasSuccessful,
           });
 
           return {
             toolCall,
-            result,
-            success: true,
+            result: resultString,
+            success: wasSuccessful,
           };
         } catch (error) {
           const errorMsg = `Tool execution failed: ${(error as Error).message}`;
@@ -643,7 +718,7 @@ export class ConversationManager {
     return this.costOptimizer.trackSessionCosts();
   }
 
-  // NEW: Streaming utilities
+  // Streaming utilities
   isStreamingActive(): boolean {
     return this.streamingManager?.isStreaming() || false;
   }

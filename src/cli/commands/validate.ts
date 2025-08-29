@@ -57,11 +57,11 @@ async function validateTools(): Promise<void> {
 
     OutputFormatter.formatSection("Validation Results");
 
-    valid.forEach((toolName) => {
+    valid.forEach((toolName: string) => {
       OutputFormatter.formatValidationResult(toolName, true);
     });
 
-    invalid.forEach((toolName) => {
+    invalid.forEach((toolName: string) => {
       OutputFormatter.formatValidationResult(toolName, false);
     });
 

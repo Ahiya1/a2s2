@@ -25,30 +25,15 @@ export class FoundationAnalyzer {
     return this.get_project_tree(validatedParams);
   }
 
-  async get_project_tree(params: FoundationAnalyzerParams & { forceRefresh?: boolean }): Promise<string> {
+  async get_project_tree(
+    params: FoundationAnalyzerParams & { forceRefresh?: boolean }
+  ): Promise<string> {
     const projectPath = params.path || process.cwd();
-    const normalizedPath = require('path').resolve(projectPath);
-    const cacheKey = `tree_${normalizedPath}`;
+    const normalizedPath = require("path").resolve(projectPath);
 
-    // Check cache unless force refresh is requested
-    if (!params.forceRefresh && this.cache.has(cacheKey)) {
-      const cached = this.cache.get(cacheKey)!;
-      const age = Date.now() - cached.timestamp;
-      
-      if (age < this.cacheExpiryMs) {
-        Logger.debug(`Using cached project tree analysis`, { 
-          path: projectPath, 
-          age: Math.round(age / 1000) + 's'
-        });
-        return cached.result;
-      } else {
-        // Remove expired cache entry
-        this.cache.delete(cacheKey);
-        Logger.debug(`Cache expired, will re-analyze`, { path: projectPath });
-      }
-    }
-
-    Logger.info(`Analyzing project structure`, { path: projectPath });
+    Logger.info(`Analyzing project structure (no cache)`, {
+      path: projectPath,
+    });
 
     try {
       // Try tree command without --gitignore first, then with basic exclusions
@@ -59,17 +44,9 @@ export class FoundationAnalyzer {
         timeout: 10000,
       });
 
-      // Cache the result
-      this.cache.set(cacheKey, {
-        result,
-        timestamp: Date.now(),
-        path: projectPath
-      });
-
-      Logger.info(`Project tree analysis completed and cached`, {
+      Logger.info(`Project tree analysis completed`, {
         path: projectPath,
         outputSize: result.length,
-        cacheKey
       });
 
       return result;
@@ -90,15 +67,8 @@ export class FoundationAnalyzer {
         });
 
         const result = `Project structure (fallback listing):\n${fallbackResult}`;
-        
-        // Cache the fallback result too
-        this.cache.set(cacheKey, {
-          result,
-          timestamp: Date.now(),
-          path: projectPath
-        });
 
-        Logger.warn(`Using fallback directory listing and cached result`, { path: projectPath });
+        Logger.warn(`Using fallback directory listing`, { path: projectPath });
         return result;
       } catch (fallbackError) {
         throw new Error(
@@ -113,7 +83,7 @@ export class FoundationAnalyzer {
    */
   clearCache(path?: string): void {
     if (path) {
-      const normalizedPath = require('path').resolve(path);
+      const normalizedPath = require("path").resolve(path);
       const cacheKey = `tree_${normalizedPath}`;
       this.cache.delete(cacheKey);
       Logger.debug(`Cleared cache for path`, { path });
@@ -126,16 +96,19 @@ export class FoundationAnalyzer {
   /**
    * Get cache statistics for monitoring
    */
-  getCacheStats(): { size: number; entries: Array<{ path: string; age: number }> } {
+  getCacheStats(): {
+    size: number;
+    entries: Array<{ path: string; age: number }>;
+  } {
     const now = Date.now();
-    const entries = Array.from(this.cache.values()).map(cached => ({
+    const entries = Array.from(this.cache.values()).map((cached) => ({
       path: cached.path,
-      age: Math.round((now - cached.timestamp) / 1000) // age in seconds
+      age: Math.round((now - cached.timestamp) / 1000), // age in seconds
     }));
 
     return {
       size: this.cache.size,
-      entries
+      entries,
     };
   }
 
