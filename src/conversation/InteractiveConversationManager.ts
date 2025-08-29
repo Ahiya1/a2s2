@@ -5,14 +5,23 @@ import {
 import { ToolManager, Tool } from "../tools/ToolManager";
 import { WebSearchTool } from "../tools/web/WebSearchTool";
 import { AnthropicConfigManager } from "../config/AnthropicConfig";
+import { StreamingProgress } from "./StreamingManager";
 import { Logger } from "../logging/Logger";
 import * as readline from "readline";
+
+// NEW: Progress indicator utilities
+const ora = require("ora");
 
 export interface InteractiveConversationOptions {
   workingDirectory: string;
   verbose?: boolean;
   enableWebSearch?: boolean;
   costBudget?: number;
+  // NEW: Streaming options
+  enableStreaming?: boolean;
+  showProgress?: boolean;
+  typewriterEffect?: boolean;
+  enableCancellation?: boolean;
 }
 
 export interface InteractiveConversationResult {
@@ -21,56 +30,89 @@ export interface InteractiveConversationResult {
   totalCost: number;
   messageCount: number;
   conversationId: string;
+  // NEW: Streaming results
+  wasStreamed?: boolean;
+  totalStreamingTime?: number;
 }
 
-/**
- * InteractiveConversationManager provides a direct chat interface with Claude
- * that has access to all agent tools during the conversation.
- */
 export class InteractiveConversationManager {
   private conversationManager: ConversationManager;
   private toolManager: ToolManager;
   private webSearchTool?: WebSearchTool;
-  private rl: readline.Interface;
+  private rl!: readline.Interface;
   private options: InteractiveConversationOptions;
   private totalCost: number = 0;
   private messageCount: number = 0;
   private conversationId: string;
 
+  // NEW: Streaming state
+  private currentSpinner?: any;
+  private isStreamingActive: boolean = false;
+  private streamingStartTime: number = 0;
+  private totalStreamingTime: number = 0;
+  private cancellationRequested: boolean = false;
+
   constructor(options: InteractiveConversationOptions) {
     this.options = options;
     this.conversationId = this.generateConversationId();
 
-    // Validate API key
     if (!process.env.ANTHROPIC_API_KEY) {
       throw new Error("ANTHROPIC_API_KEY environment variable is required");
     }
 
-    // Initialize conversation manager with Claude 4 Sonnet
     const configManager = new AnthropicConfigManager({
       enableExtendedContext: false,
       enableWebSearch: options.enableWebSearch !== false,
+      // NEW: Configure streaming based on options
+      enableStreaming: options.enableStreaming !== false,
+      showProgressIndicators: options.showProgress !== false,
+      typewriterEffect: options.typewriterEffect || false,
     });
 
     this.conversationManager = new ConversationManager(
       configManager.getConfig()
     );
 
-    // Initialize tool manager with all available tools
     this.toolManager = new ToolManager();
     this.setupWebSearch();
+    this.setupReadlineInterface();
 
-    // Setup readline interface
+    Logger.info("InteractiveConversationManager initialized", {
+      conversationId: this.conversationId,
+      workingDirectory: options.workingDirectory,
+      enableWebSearch: options.enableWebSearch,
+      streamingEnabled: options.enableStreaming !== false,
+      progressEnabled: options.showProgress !== false,
+    });
+  }
+
+  private setupReadlineInterface(): void {
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
       prompt: "\n💭 You: ",
     });
 
-    Logger.info("InteractiveConversationManager initialized", {
-      conversationId: this.conversationId,
-      workingDirectory: options.workingDirectory,
-      enableWebSearch: options.enableWebSearch,
+    // NEW: Setup cancellation handling
+    if (this.options.enableCancellation !== false) {
+      this.setupCancellationHandling();
+    }
+  }
+
+  // NEW: Setup CTRL+C handling during streaming
+  private setupCancellationHandling(): void {
+    process.on("SIGINT", () => {
+      if (this.isStreamingActive) {
+        this.cancellationRequested = true;
+        this.stopCurrentStreaming();
+        console.log(
+          '\n\n🛑 Streaming cancelled by user. Type "quit" to exit or continue chatting...\n'
+        );
+        this.rl.prompt();
+      } else {
+        console.log("\n👋 Goodbye!");
+        process.exit(0);
+      }
     });
   }
 
@@ -80,10 +122,7 @@ export class InteractiveConversationManager {
         conversationId: this.conversationId,
       });
 
-      // Display welcome message
       this.displayWelcome();
-
-      // Start the conversation loop
       await this.conversationLoop();
 
       return {
@@ -91,6 +130,8 @@ export class InteractiveConversationManager {
         totalCost: this.totalCost,
         messageCount: this.messageCount,
         conversationId: this.conversationId,
+        wasStreamed: this.totalStreamingTime > 0,
+        totalStreamingTime: this.totalStreamingTime,
       };
     } catch (error) {
       const errorMessage =
@@ -107,6 +148,8 @@ export class InteractiveConversationManager {
         totalCost: this.totalCost,
         messageCount: this.messageCount,
         conversationId: this.conversationId,
+        wasStreamed: this.totalStreamingTime > 0,
+        totalStreamingTime: this.totalStreamingTime,
       };
     } finally {
       this.cleanup();
@@ -126,6 +169,15 @@ export class InteractiveConversationManager {
     if (this.webSearchTool) {
       console.log("   🔍 Web search capabilities");
     }
+
+    // NEW: Streaming information
+    if (this.options.enableStreaming !== false) {
+      console.log("   ⚡ Real-time streaming responses");
+      if (this.options.enableCancellation !== false) {
+        console.log("   🛑 CTRL+C to cancel streaming");
+      }
+    }
+
     console.log(
       "\n🎯 The agent can explore your project and help with development tasks."
     );
@@ -140,6 +192,12 @@ export class InteractiveConversationManager {
     console.log("   • Type 'quit' or 'exit' to end the conversation");
     console.log("   • Type 'cost' to see current usage costs");
     console.log("   • Type 'help' for more information");
+    if (
+      this.options.enableStreaming !== false &&
+      this.options.enableCancellation !== false
+    ) {
+      console.log("   • Press CTRL+C during responses to cancel streaming");
+    }
     console.log("\n" + "=".repeat(68));
   }
 
@@ -148,7 +206,6 @@ export class InteractiveConversationManager {
       const handleInput = async (input: string) => {
         const trimmed = input.trim();
 
-        // Handle special commands
         if (
           trimmed.toLowerCase() === "quit" ||
           trimmed.toLowerCase() === "exit"
@@ -163,6 +220,11 @@ export class InteractiveConversationManager {
             `\n💰 Current session cost: $${this.totalCost.toFixed(4)}`
           );
           console.log(`📊 Messages exchanged: ${this.messageCount}`);
+          if (this.totalStreamingTime > 0) {
+            console.log(
+              `⚡ Total streaming time: ${(this.totalStreamingTime / 1000).toFixed(1)}s`
+            );
+          }
           this.rl.prompt();
           return;
         }
@@ -179,7 +241,6 @@ export class InteractiveConversationManager {
         }
 
         try {
-          // Check cost budget
           if (
             this.options.costBudget &&
             this.totalCost >= this.options.costBudget
@@ -191,42 +252,8 @@ export class InteractiveConversationManager {
             return;
           }
 
-          // Send message to Claude with tools
-          console.log("\n🤖 Claude (thinking...)\n");
-
-          const result = await this.conversationManager.executeWithTools(
-            trimmed,
-            this.getAllTools(),
-            {
-              maxIterations: 15, // Limited iterations for interactive use
-              costBudget: this.options.costBudget,
-              useExtendedContext: false,
-              enablePromptCaching: true,
-            }
-          );
-
-          this.messageCount++;
-          this.totalCost += result.totalCost;
-
-          if (result.success && result.response) {
-            // Display Claude's response
-            console.log("🤖 Claude:");
-            console.log(result.response.textContent);
-
-            // Show tool usage if verbose
-            if (this.options.verbose && result.response.toolCalls.length > 0) {
-              console.log(
-                `\n🔧 Tools used: ${result.response.toolCalls.map((tc) => tc.name).join(", ")}`
-              );
-            }
-          } else {
-            console.log(
-              "❌ Sorry, I encountered an error processing your message."
-            );
-            if (result.error) {
-              console.log(`Error: ${result.error.message}`);
-            }
-          }
+          // NEW: Enhanced streaming conversation
+          await this.handleStreamingConversation(trimmed);
         } catch (error) {
           console.log(
             `❌ Error: ${error instanceof Error ? error.message : String(error)}`
@@ -242,9 +269,173 @@ export class InteractiveConversationManager {
         resolve();
       });
 
-      // Start with initial prompt
       this.rl.prompt();
     });
+  }
+
+  // NEW: Handle conversation with streaming support
+  private async handleStreamingConversation(input: string): Promise<void> {
+    this.cancellationRequested = false;
+    this.isStreamingActive = true;
+    this.streamingStartTime = Date.now();
+
+    // Show initial progress
+    if (this.options.showProgress !== false) {
+      this.showStreamingIndicator("🤖 Claude is thinking...");
+    } else {
+      console.log("\n🤖 Claude:");
+    }
+
+    try {
+      const conversationOptions: ConversationOptions = {
+        maxIterations: 15,
+        costBudget: this.options.costBudget,
+        useExtendedContext: false,
+        enablePromptCaching: true,
+        enableStreaming: this.options.enableStreaming !== false,
+        streamingOptions: {
+          showProgress: this.options.showProgress !== false,
+          enableTypewriter: this.options.typewriterEffect || false,
+          onProgress: this.handleStreamingProgress.bind(this),
+          onText: this.handleStreamingText.bind(this),
+          onThinking: this.handleStreamingThinking.bind(this),
+          onComplete: this.handleStreamingComplete.bind(this),
+          onError: this.handleStreamingError.bind(this),
+        },
+        onProgress: this.handleStreamingProgress.bind(this),
+        onStreamText: this.handleStreamingText.bind(this),
+        onStreamThinking: this.handleStreamingThinking.bind(this),
+      };
+
+      const result = await this.conversationManager.executeWithTools(
+        input,
+        this.getAllTools(),
+        conversationOptions
+      );
+
+      this.messageCount++;
+      this.totalCost += result.totalCost;
+
+      if (result.streamingDuration) {
+        this.totalStreamingTime += result.streamingDuration;
+      }
+
+      if (!result.success || result.error) {
+        console.log(
+          "❌ Sorry, I encountered an error processing your message."
+        );
+        if (result.error) {
+          console.log(`Error: ${result.error.message}`);
+        }
+      } else if (!this.cancellationRequested && result.response) {
+        // Only show success message if not cancelled and response exists
+        if (this.options.verbose && result.response.toolCalls.length > 0) {
+          console.log(
+            `\n🔧 Tools used: ${result.response.toolCalls.map((tc) => tc.name).join(", ")}`
+          );
+        }
+      }
+    } finally {
+      this.isStreamingActive = false;
+      this.hideStreamingIndicator();
+    }
+  }
+
+  // NEW: Streaming event handlers
+  private handleStreamingProgress(progress: StreamingProgress): void {
+    if (this.cancellationRequested) return;
+
+    const messages = {
+      starting: "🔄 Starting...",
+      streaming: "💬 Streaming response...",
+      thinking: "🧠 Thinking deeply...",
+      tool_use: "🛠️ Using tools...",
+      complete: "✅ Complete!",
+      error: "❌ Error occurred",
+    };
+
+    const message = messages[progress.phase] || "⏳ Processing...";
+
+    if (progress.percentage !== undefined && progress.percentage > 0) {
+      this.showStreamingIndicator(`${message} (${progress.percentage}%)`);
+    } else {
+      this.showStreamingIndicator(message);
+    }
+  }
+
+  private handleStreamingText(text: string): void {
+    if (this.cancellationRequested) return;
+
+    this.hideStreamingIndicator();
+
+    if (!this.options.typewriterEffect) {
+      process.stdout.write(text);
+    }
+    // Note: typewriter effect is handled in StreamingManager
+  }
+
+  private handleStreamingThinking(thinking: string): void {
+    if (this.cancellationRequested) return;
+
+    if (this.options.verbose) {
+      // Show abbreviated thinking in verbose mode
+      const preview =
+        thinking.length > 50 ? thinking.substring(0, 47) + "..." : thinking;
+      this.showStreamingIndicator(`🧠 Thinking: ${preview}`);
+    }
+  }
+
+  private handleStreamingComplete(): void {
+    this.hideStreamingIndicator();
+    console.log(); // New line after response
+  }
+
+  private handleStreamingError(error: Error): void {
+    this.hideStreamingIndicator();
+    console.log(`\n❌ Streaming error: ${error.message}`);
+  }
+
+  // NEW: Visual indicators for streaming
+  private showStreamingIndicator(message: string): void {
+    if (!process.stdout.isTTY || this.options.showProgress === false) return;
+
+    this.hideStreamingIndicator();
+
+    try {
+      this.currentSpinner = ora({
+        text: message,
+        spinner: "dots",
+        color: "cyan",
+      }).start();
+    } catch (error) {
+      // Fallback if ora is not available
+      console.log(`\r${message}`);
+    }
+  }
+
+  private hideStreamingIndicator(): void {
+    if (this.currentSpinner) {
+      try {
+        this.currentSpinner.stop();
+        this.currentSpinner = undefined;
+      } catch (error) {
+        // Ignore errors when stopping spinner
+      }
+    }
+  }
+
+  private stopCurrentStreaming(): void {
+    this.hideStreamingIndicator();
+
+    if (this.conversationManager.isStreamingActive()) {
+      this.conversationManager.stopStreaming();
+    }
+
+    this.isStreamingActive = false;
+
+    if (this.streamingStartTime > 0) {
+      this.totalStreamingTime += Date.now() - this.streamingStartTime;
+    }
   }
 
   private displayHelp(): void {
@@ -259,6 +450,23 @@ export class InteractiveConversationManager {
     console.log(
       "   • It can read/write files, analyze structure, run commands, and search the web"
     );
+
+    if (this.options.enableStreaming !== false) {
+      console.log("\n⚡ Streaming Features:");
+      console.log("   • Responses stream in real-time for faster interaction");
+      console.log("   • Progress indicators show what Claude is doing");
+      if (this.options.enableCancellation !== false) {
+        console.log(
+          "   • Press CTRL+C during responses to cancel and continue"
+        );
+      }
+      if (this.options.typewriterEffect) {
+        console.log(
+          "   • Typewriter effect for a more natural conversation feel"
+        );
+      }
+    }
+
     console.log("\n💡 Tips for effective conversation:");
     console.log("   • Be specific about what you want to accomplish");
     console.log(
@@ -284,6 +492,12 @@ export class InteractiveConversationManager {
     console.log("   • 'quit' or 'exit': End the conversation");
     console.log("   • 'cost': Show current usage costs");
     console.log("   • 'help': Show this help message");
+    if (
+      this.options.enableStreaming !== false &&
+      this.options.enableCancellation !== false
+    ) {
+      console.log("   • CTRL+C: Cancel current streaming response");
+    }
   }
 
   private setupWebSearch(): void {
@@ -424,12 +638,14 @@ export class InteractiveConversationManager {
 
   private cleanup(): void {
     try {
+      this.stopCurrentStreaming();
       this.rl?.close();
       this.conversationManager?.clear();
       Logger.info("Interactive conversation cleaned up", {
         conversationId: this.conversationId,
         totalCost: this.totalCost,
         messageCount: this.messageCount,
+        totalStreamingTime: this.totalStreamingTime,
       });
     } catch (error) {
       Logger.warn("Error during cleanup", {

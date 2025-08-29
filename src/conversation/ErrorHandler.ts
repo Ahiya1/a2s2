@@ -23,8 +23,8 @@ export type ErrorCode =
   | "authentication_error" // 401 - Invalid API key
   | "permission_denied" // 403 - Permission denied
   | "not_found" // 404 - Resource not found
-  | "server_error" // 500 - Internal server error
-  | "timeout_error" // Request timeout
+  | "server_error" // 500/503 - Internal server error
+  | "timeout_error" // Request timeout or gateway timeout (504)
   | "network_error" // Network connectivity issues
   | "budget_exceeded" // Cost budget exceeded
   | "unknown_error"; // Unclassified error
@@ -162,6 +162,21 @@ export class ErrorHandler {
       );
     }
 
+    // FIXED: Add 504 Gateway timeout handling - these are retryable infrastructure issues
+    if (
+      message.includes("504") ||
+      message.includes("gateway timeout") ||
+      message.includes("gateway time-out")
+    ) {
+      return new AnthropicError(
+        "timeout_error",
+        error.message,
+        504,
+        undefined,
+        error
+      );
+    }
+
     if (
       message.includes("context window") ||
       message.includes("too many tokens")
@@ -235,6 +250,7 @@ export class ErrorHandler {
       );
     }
 
+    // General timeout handling (for non-504 timeouts)
     if (message.includes("timeout") || message.includes("timed out")) {
       return new AnthropicError(
         "timeout_error",
@@ -321,6 +337,8 @@ export class ErrorHandler {
       case 500:
       case 503: // Include 503 as server error
         return new AnthropicError("server_error", message, status);
+      case 504: // FIXED: Include 504 as timeout error (retryable)
+        return new AnthropicError("timeout_error", message, status);
       default:
         return new AnthropicError("unknown_error", message, status);
     }

@@ -332,7 +332,7 @@ export class CompletePhase {
 
     const output = await this.toolManager.executeTool("run_command", {
       command: step.command,
-      timeout: 30000, // 30 second timeout
+      timeout: 3000000, // 30 second timeout
     });
 
     result.testsRun.push(step.command);

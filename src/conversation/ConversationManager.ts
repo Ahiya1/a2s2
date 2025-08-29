@@ -12,6 +12,11 @@ import {
   ThinkingBlock,
 } from "./ResponseParser";
 import { CostOptimizer, TokenUsage, CostCalculation } from "./CostOptimizer";
+import {
+  StreamingManager,
+  StreamingOptions,
+  StreamingProgress,
+} from "./StreamingManager";
 import { Tool } from "../tools/ToolManager";
 import { Logger } from "../logging/Logger";
 
@@ -20,6 +25,12 @@ export interface ConversationOptions {
   enablePromptCaching?: boolean;
   maxIterations?: number;
   costBudget?: number;
+  // NEW: Streaming options
+  enableStreaming?: boolean;
+  streamingOptions?: StreamingOptions;
+  onProgress?: (progress: StreamingProgress) => void;
+  onStreamText?: (text: string) => void;
+  onStreamThinking?: (thinking: string) => void;
 }
 
 export interface ConversationResult {
@@ -29,6 +40,9 @@ export interface ConversationResult {
   iterationCount: number;
   totalCost: number;
   conversationId: string;
+  // NEW: Streaming results
+  wasStreamed?: boolean;
+  streamingDuration?: number;
 }
 
 export interface ToolExecutionResult {
@@ -45,6 +59,7 @@ export class ConversationManager {
   private messageBuilder: MessageBuilder;
   private costOptimizer: CostOptimizer;
   private conversationId: string;
+  private streamingManager?: StreamingManager;
 
   constructor(config?: Partial<AnthropicConfig>) {
     this.configManager = new AnthropicConfigManager(config);
@@ -66,6 +81,7 @@ export class ConversationManager {
     Logger.info("ConversationManager initialized", {
       conversationId: this.conversationId,
       model: this.configManager.getConfig().model,
+      streamingEnabled: this.configManager.shouldStream(),
     });
   }
 
@@ -77,12 +93,15 @@ export class ConversationManager {
     const startTime = Date.now();
     let iterationCount = 0;
     const maxIterations = options.maxIterations || 50;
+    const enableStreaming =
+      options.enableStreaming ?? this.configManager.shouldStream();
 
     Logger.info("Starting conversation with tools", {
       conversationId: this.conversationId,
       toolCount: tools.length,
       promptLength: prompt.length,
       maxIterations,
+      streamingEnabled: enableStreaming,
     });
 
     try {
@@ -96,6 +115,7 @@ export class ConversationManager {
 
       let totalCost = 0;
       let lastResponse: ParsedResponse | undefined;
+      let totalStreamingDuration = 0;
 
       // Main conversation loop
       while (iterationCount < maxIterations) {
@@ -105,6 +125,7 @@ export class ConversationManager {
           `Conversation iteration ${iterationCount}/${maxIterations}`,
           {
             conversationId: this.conversationId,
+            streaming: enableStreaming,
           }
         );
 
@@ -125,19 +146,40 @@ export class ConversationManager {
             iterationCount,
             totalCost,
             conversationId: this.conversationId,
+            wasStreamed: enableStreaming,
+            streamingDuration: totalStreamingDuration,
           };
         }
 
         try {
-          // FIXED: Make API request with error handling - ErrorHandler handles all retries internally
-          const response = await this.errorHandler.executeWithRetry(
-            () => this.makeClaudeRequest(tools, options),
-            `claude_request_${iterationCount}`,
-            { conversationId: this.conversationId, iteration: iterationCount }
-          );
+          let streamingDuration = 0;
 
-          // Parse response
-          lastResponse = ResponseParser.parse(response);
+          if (enableStreaming) {
+            // STREAMING PATH
+            const streamResult = await this.makeStreamingClaudeRequest(
+              tools,
+              options,
+              {
+                ...options.streamingOptions,
+                onProgress: options.onProgress,
+                onText: options.onStreamText,
+                onThinking: options.onStreamThinking,
+              }
+            );
+
+            lastResponse = streamResult.response;
+            streamingDuration = streamResult.duration;
+            totalStreamingDuration += streamingDuration;
+          } else {
+            // BATCH PATH (original logic)
+            const response = await this.errorHandler.executeWithRetry(
+              () => this.makeClaudeRequest(tools, options),
+              `claude_request_${iterationCount}`,
+              { conversationId: this.conversationId, iteration: iterationCount }
+            );
+
+            lastResponse = ResponseParser.parse(response);
+          }
 
           // Track costs
           const costCalculation = this.costOptimizer.calculateCost(
@@ -152,9 +194,11 @@ export class ConversationManager {
             totalCost: totalCost.toFixed(4),
             toolCalls: lastResponse.toolCalls.length,
             stopReason: lastResponse.stopReason,
+            streamed: enableStreaming,
+            streamingDuration: streamingDuration,
           });
 
-          // Add assistant response to conversation properly with preserved thinking blocks
+          // Add assistant response to conversation with preserved thinking blocks
           if (lastResponse.toolCalls.length > 0) {
             this.messageBuilder.addAssistantMessageWithPreservedThinking(
               lastResponse.textContent,
@@ -170,11 +214,12 @@ export class ConversationManager {
           }
 
           // Check for completion
-          if (ResponseParser.isComplete(response)) {
+          if (ResponseParser.isComplete(lastResponse.rawResponse)) {
             Logger.info("Conversation completed naturally", {
               conversationId: this.conversationId,
               iterations: iterationCount,
               totalCost: totalCost.toFixed(4),
+              totalStreamingDuration,
             });
             break;
           }
@@ -211,6 +256,7 @@ export class ConversationManager {
                 conversationId: this.conversationId,
                 iterations: iterationCount,
                 totalCost: totalCost.toFixed(4),
+                totalStreamingDuration,
               });
               break;
             }
@@ -219,8 +265,6 @@ export class ConversationManager {
           // Context management
           this.messageBuilder.pruneContextIfNeeded(180000);
         } catch (iterationError) {
-          // FIXED: When ErrorHandler.executeWithRetry throws an error, it means all retries are exhausted
-          // This should result in conversation failure
           const anthropicError =
             iterationError instanceof AnthropicError
               ? iterationError
@@ -231,15 +275,17 @@ export class ConversationManager {
             iteration: iterationCount,
             error: anthropicError.message,
             errorCode: anthropicError.code,
+            wasStreaming: enableStreaming,
           });
 
-          // FIXED: Any error thrown by ErrorHandler.executeWithRetry should result in conversation failure
           return {
             success: false,
             error: anthropicError,
             iterationCount,
             totalCost,
             conversationId: this.conversationId,
+            wasStreamed: enableStreaming,
+            streamingDuration: totalStreamingDuration,
           };
         }
       }
@@ -250,6 +296,7 @@ export class ConversationManager {
           conversationId: this.conversationId,
           maxIterations,
           totalCost: totalCost.toFixed(4),
+          totalStreamingDuration,
         });
       }
 
@@ -259,6 +306,7 @@ export class ConversationManager {
         iterations: iterationCount,
         duration: `${(duration / 1000).toFixed(1)}s`,
         totalCost: totalCost.toFixed(4),
+        streamingDuration: totalStreamingDuration,
         success: true,
       });
 
@@ -268,9 +316,10 @@ export class ConversationManager {
         iterationCount,
         totalCost,
         conversationId: this.conversationId,
+        wasStreamed: enableStreaming,
+        streamingDuration: totalStreamingDuration,
       };
     } catch (error) {
-      // Handle outer errors (shouldn't happen with proper error handling above)
       const anthropicError =
         error instanceof AnthropicError
           ? error
@@ -299,10 +348,17 @@ export class ConversationManager {
     }
   }
 
-  private async makeClaudeRequest(
+  // NEW: Streaming implementation
+  private async makeStreamingClaudeRequest(
     tools: Tool[],
-    options: ConversationOptions
-  ): Promise<any> {
+    options: ConversationOptions,
+    streamingOptions?: StreamingOptions
+  ): Promise<{ response: ParsedResponse; duration: number }> {
+    const startTime = Date.now();
+
+    // Initialize streaming manager
+    this.streamingManager = new StreamingManager(streamingOptions);
+
     const config = this.configManager.getRequestConfig();
     const messages = this.messageBuilder.getMessages();
 
@@ -311,7 +367,6 @@ export class ConversationManager {
       ? this.costOptimizer.enablePromptCaching(messages)
       : messages;
 
-    // Update config for extended context if needed
     if (options.useExtendedContext) {
       this.configManager.updateConfig({ enableExtendedContext: true });
     }
@@ -319,16 +374,147 @@ export class ConversationManager {
     const request = {
       model: config.model,
       max_tokens: config.max_tokens,
-      thinking: {
-        type: "enabled" as const,
-        budget_tokens: config.thinking.budget_tokens,
-      },
+      thinking: config.thinking,
       messages: optimizedMessages,
       tools: this.formatToolsForClaude(tools),
       betas: this.configManager.getBetaHeaders(),
+      stream: true, // Enable streaming
     };
 
-    Logger.debug("Making Claude API request", {
+    Logger.debug("Making streaming Claude API request", {
+      conversationId: this.conversationId,
+      messageCount: optimizedMessages.length,
+      toolCount: tools.length,
+      betaHeaders: request.betas,
+    });
+
+    // Start streaming
+    this.streamingManager.startStreaming();
+
+    try {
+      // Create streaming request
+      const stream = this.anthropic.beta.messages.stream(request);
+
+      // Set up event handlers
+      stream.on("text", (text) => {
+        this.streamingManager?.handleStreamingEvent({
+          type: "content_block_delta",
+          data: { delta: { type: "text_delta", text } },
+          timestamp: Date.now(),
+        });
+      });
+
+      stream.on("contentBlockStart", (data) => {
+        this.streamingManager?.handleStreamingEvent({
+          type: "content_block_start",
+          data: { content_block: data },
+          index: data.index,
+          timestamp: Date.now(),
+        });
+      });
+
+      stream.on("contentBlockDelta", (data) => {
+        this.streamingManager?.handleStreamingEvent({
+          type: "content_block_delta",
+          data: { delta: data },
+          index: data.index,
+          timestamp: Date.now(),
+        });
+      });
+
+      stream.on("contentBlockStop", (data) => {
+        this.streamingManager?.handleStreamingEvent({
+          type: "content_block_stop",
+          data,
+          index: data.index,
+          timestamp: Date.now(),
+        });
+      });
+
+      stream.on("messageStart", (data) => {
+        this.streamingManager?.handleStreamingEvent({
+          type: "message_start",
+          data: { message: data },
+          timestamp: Date.now(),
+        });
+      });
+
+      stream.on("messageDelta", (data) => {
+        this.streamingManager?.handleStreamingEvent({
+          type: "message_delta",
+          data,
+          timestamp: Date.now(),
+        });
+      });
+
+      stream.on("messageStop", () => {
+        this.streamingManager?.handleStreamingEvent({
+          type: "message_stop",
+          timestamp: Date.now(),
+        });
+      });
+
+      stream.on("error", (error) => {
+        this.streamingManager?.handleStreamingEvent({
+          type: "error",
+          data: error,
+          timestamp: Date.now(),
+        });
+      });
+
+      // Wait for completion
+      const finalMessage = await stream.finalMessage();
+
+      const duration = Date.now() - startTime;
+
+      // Parse the final response
+      const response = ResponseParser.parse(finalMessage);
+
+      Logger.debug("Streaming request completed", {
+        conversationId: this.conversationId,
+        duration: `${duration}ms`,
+        tokens: response.usage.inputTokens + response.usage.outputTokens,
+      });
+
+      return { response, duration };
+    } catch (error) {
+      this.streamingManager?.handleStreamingEvent({
+        type: "error",
+        data: error,
+        timestamp: Date.now(),
+      });
+
+      throw error;
+    }
+  }
+
+  // EXISTING: Batch request (fallback)
+  private async makeClaudeRequest(
+    tools: Tool[],
+    options: ConversationOptions
+  ): Promise<any> {
+    const config = this.configManager.getRequestConfig();
+    const messages = this.messageBuilder.getMessages();
+
+    const optimizedMessages = options.enablePromptCaching
+      ? this.costOptimizer.enablePromptCaching(messages)
+      : messages;
+
+    if (options.useExtendedContext) {
+      this.configManager.updateConfig({ enableExtendedContext: true });
+    }
+
+    const request = {
+      model: config.model,
+      max_tokens: config.max_tokens,
+      thinking: config.thinking,
+      messages: optimizedMessages,
+      tools: this.formatToolsForClaude(tools),
+      betas: this.configManager.getBetaHeaders(),
+      // No stream parameter - this is batch mode
+    };
+
+    Logger.debug("Making batch Claude API request", {
       conversationId: this.conversationId,
       messageCount: optimizedMessages.length,
       toolCount: tools.length,
@@ -350,7 +536,6 @@ export class ConversationManager {
 
     const results: ToolExecutionResult[] = [];
 
-    // Execute tool calls in parallel for efficiency
     const executionPromises = toolCalls.map(
       async (toolCall): Promise<ToolExecutionResult> => {
         const tool = tools.find((t) => (t.name || "") === toolCall.name);
@@ -419,7 +604,6 @@ export class ConversationManager {
     return results;
   }
 
-  // Tool formatting to match Claude API expectations exactly
   private formatToolsForClaude(tools: Tool[]): any[] {
     return tools.map((tool) => ({
       name: tool.name || "unknown_tool",
@@ -459,8 +643,23 @@ export class ConversationManager {
     return this.costOptimizer.trackSessionCosts();
   }
 
+  // NEW: Streaming utilities
+  isStreamingActive(): boolean {
+    return this.streamingManager?.isStreaming() || false;
+  }
+
+  stopStreaming(): void {
+    this.streamingManager?.stopStreaming();
+  }
+
+  getStreamingState() {
+    return this.streamingManager?.getPublicState();
+  }
+
   clear(): void {
     this.messageBuilder.clear();
+    this.streamingManager?.stopStreaming();
+    this.streamingManager = undefined;
     this.conversationId = this.generateConversationId();
     Logger.info("Conversation cleared", {
       conversationId: this.conversationId,

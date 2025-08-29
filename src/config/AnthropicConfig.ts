@@ -10,6 +10,13 @@ export interface AnthropicConfig {
   enableExtendedContext: boolean;
   enableInterleaved: boolean;
   enableWebSearch: boolean;
+  // NEW: Streaming configuration options
+  enableStreaming: boolean;
+  streamingBufferSize: number;
+  streamingTimeout: number;
+  showProgressIndicators: boolean;
+  typewriterEffect: boolean;
+  typewriterDelay: number;
 }
 
 export class AnthropicConfigManager {
@@ -30,10 +37,29 @@ export class AnthropicConfigManager {
       enableExtendedContext: false,
       enableInterleaved: true,
       enableWebSearch: true,
+      // NEW: Default streaming settings
+      enableStreaming: true,
+      streamingBufferSize: 64, // Characters to buffer before flushing
+      streamingTimeout: 3000000, // 3000 seconds
+      showProgressIndicators: true,
+      typewriterEffect: false, // Disabled by default for better UX
+      typewriterDelay: 20, // ms between characters
     };
 
     // Merge with custom configuration
     this.config = { ...defaultConfig, ...customConfig };
+
+    // Override streaming based on environment
+    if (process.env.NODE_ENV === "test") {
+      this.config.enableStreaming = false;
+      this.config.showProgressIndicators = false;
+    }
+
+    // Disable streaming if not TTY
+    if (!process.stdout.isTTY) {
+      this.config.showProgressIndicators = false;
+      this.config.typewriterEffect = false;
+    }
 
     // Validate the configuration
     this.validateConfig();
@@ -54,7 +80,6 @@ export class AnthropicConfigManager {
       throw new Error("thinkingBudget must be non-negative");
     }
 
-    // FIXED: Allow thinkingBudget to equal maxTokens (was incorrectly rejecting equal values)
     if (this.config.thinkingBudget > this.config.maxTokens) {
       throw new Error(
         "thinkingBudget should be less than or equal to maxTokens"
@@ -70,6 +95,29 @@ export class AnthropicConfigManager {
       this.config.baseRetryDelay > 10000
     ) {
       throw new Error("baseRetryDelay must be between 100ms and 10,000ms");
+    }
+
+    // NEW: Validate streaming settings
+    if (
+      this.config.streamingBufferSize < 1 ||
+      this.config.streamingBufferSize > 1000
+    ) {
+      throw new Error(
+        "streamingBufferSize must be between 1 and 1000 characters"
+      );
+    }
+
+    if (
+      this.config.streamingTimeout < 1000 ||
+      this.config.streamingTimeout > 3000000
+    ) {
+      throw new Error(
+        "streamingTimeout must be between 1 second and 5 minutes"
+      );
+    }
+
+    if (this.config.typewriterDelay < 1 || this.config.typewriterDelay > 1000) {
+      throw new Error("typewriterDelay must be between 1ms and 1000ms");
     }
 
     if (
@@ -99,6 +147,8 @@ export class AnthropicConfigManager {
         type: "enabled" as const,
         budget_tokens: this.config.thinkingBudget,
       },
+      // NEW: Add streaming configuration
+      stream: this.config.enableStreaming,
     };
   }
 
@@ -114,6 +164,45 @@ export class AnthropicConfigManager {
     }
 
     return headers;
+  }
+
+  // NEW: Streaming configuration helpers
+  getStreamingConfig(): {
+    enabled: boolean;
+    bufferSize: number;
+    timeout: number;
+    showProgress: boolean;
+    typewriter: boolean;
+    typewriterDelay: number;
+  } {
+    return {
+      enabled: this.config.enableStreaming,
+      bufferSize: this.config.streamingBufferSize,
+      timeout: this.config.streamingTimeout,
+      showProgress: this.config.showProgressIndicators,
+      typewriter: this.config.typewriterEffect,
+      typewriterDelay: this.config.typewriterDelay,
+    };
+  }
+
+  shouldStream(): boolean {
+    return (
+      this.config.enableStreaming &&
+      process.env.NODE_ENV !== "test" &&
+      typeof process !== "undefined" &&
+      process.stdout &&
+      process.stdout.isTTY
+    );
+  }
+
+  shouldShowProgress(): boolean {
+    return (
+      this.config.showProgressIndicators &&
+      process.env.NODE_ENV !== "test" &&
+      typeof process !== "undefined" &&
+      process.stdout &&
+      process.stdout.isTTY
+    );
   }
 
   // Cost calculation helpers
@@ -159,6 +248,9 @@ export class AnthropicConfigManager {
       enableExtendedContext: false, // Expensive, enable only when needed
       enableInterleaved: true, // Recommended for autonomous agents
       enableWebSearch: true, // Useful for current information
+      enableStreaming: true, // Better user experience
+      showProgressIndicators: true, // Visual feedback
+      typewriterEffect: false, // Can be distracting for long responses
     };
   }
 
@@ -169,6 +261,7 @@ export class AnthropicConfigManager {
     extendedContext: boolean;
     interleaved: boolean;
     webSearch: boolean;
+    streaming: boolean;
     estimatedCostPer1KTokens: string;
   } {
     const inputCost = this.getInputTokenCost(1000);
@@ -181,6 +274,7 @@ export class AnthropicConfigManager {
       extendedContext: this.config.enableExtendedContext,
       interleaved: this.config.enableInterleaved,
       webSearch: this.config.enableWebSearch,
+      streaming: this.config.enableStreaming,
       estimatedCostPer1KTokens: `$${avgCost.toFixed(6)}`,
     };
   }

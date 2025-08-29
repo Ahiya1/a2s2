@@ -217,7 +217,7 @@ export class EnvLoader {
     console.log("  ANTHROPIC_API_KEY=sk-ant-your-key-here");
     console.log("  LOG_LEVEL=info");
     console.log("  MAX_FILE_SIZE=10485760");
-    console.log("  COMMAND_TIMEOUT=30000");
+    console.log("  COMMAND_TIMEOUT=3000000");
     console.log("");
     console.log(
       "┌─────────────────────────────────────────────────────────────────────┐"
@@ -371,7 +371,7 @@ export class EnvLoader {
   }
 
   static getCommandTimeout(): number {
-    const timeout = parseInt(process.env.COMMAND_TIMEOUT || "30000", 10);
+    const timeout = parseInt(process.env.COMMAND_TIMEOUT || "3000000", 10);
     return Math.max(timeout, 1000); // Minimum 1 second
   }
 }
