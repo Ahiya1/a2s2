@@ -5,3 +5,6 @@ export { FileWriter } from "./tools/files/FileWriter";
 export { ShellExecutor } from "./tools/shell/ShellExecutor";
 export { Logger } from "./logging/Logger";
 export { ConfigManager } from "./config/ConfigManager";
+export { InteractiveConversationManager } from "./conversation/InteractiveConversationManager";
+export { ConversationManager } from "./conversation/ConversationManager";
+export { AgentSession } from "./agent/AgentSession";

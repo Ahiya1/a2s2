@@ -126,7 +126,7 @@ export class AgentSession {
 
       // Configure conversation options with proper cost budget handling
       const conversationOptions: ConversationOptions = {
-        maxIterations: options.maxIterations || 50,
+        maxIterations: options.maxIterations || 190,
         costBudget: options.costBudget || 50.0,
         useExtendedContext: options.enableExtendedContext,
         enablePromptCaching: true,

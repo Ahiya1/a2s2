@@ -6,6 +6,7 @@ import { createBreatheCommand } from "./commands/breathe";
 import { createContinueCommand } from "./commands/continue";
 import { createStatusCommand } from "./commands/status";
 import { createConfigCommand } from "./commands/config";
+import { createConverseCommand } from "./commands/converse";
 import { ConfigManager } from "../config/ConfigManager";
 import { EnvLoader } from "../config/EnvLoader";
 import { Logger } from "../logging/Logger";
@@ -41,6 +42,9 @@ export function createCLI(): Command {
   program.addCommand(createBreatheCommand());
   program.addCommand(createContinueCommand());
   program.addCommand(createStatusCommand());
+  
+  // Interactive conversation mode
+  program.addCommand(createConverseCommand());
 
   // Configuration command
   program.addCommand(createConfigCommand());
@@ -83,6 +87,9 @@ Examples:
   $ a2s2 breathe "Create a React todo app with TypeScript"
   $ a2s2 continue "Add tests and improve error handling"
   $ a2s2 status --detailed --health-check
+  
+  # Interactive conversation mode
+  $ a2s2 converse                # Chat with agent before autonomous execution
 
   # Configuration
   $ a2s2 config --status      # Check current setup
@@ -205,4 +212,5 @@ export {
   createBreatheCommand,
   createContinueCommand,
   createStatusCommand,
+  createConverseCommand,
 };

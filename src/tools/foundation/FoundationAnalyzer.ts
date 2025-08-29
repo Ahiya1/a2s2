@@ -5,8 +5,16 @@ import {
 import { ShellExecutor } from "../shell/ShellExecutor";
 import { Logger } from "../../logging/Logger";
 
+interface CachedResult {
+  result: string;
+  timestamp: number;
+  path: string;
+}
+
 export class FoundationAnalyzer {
   private shellExecutor: ShellExecutor;
+  private cache: Map<string, CachedResult> = new Map();
+  private cacheExpiryMs: number = 5 * 60 * 1000; // 5 minutes
 
   constructor() {
     this.shellExecutor = new ShellExecutor();
@@ -17,8 +25,28 @@ export class FoundationAnalyzer {
     return this.get_project_tree(validatedParams);
   }
 
-  async get_project_tree(params: FoundationAnalyzerParams): Promise<string> {
+  async get_project_tree(params: FoundationAnalyzerParams & { forceRefresh?: boolean }): Promise<string> {
     const projectPath = params.path || process.cwd();
+    const normalizedPath = require('path').resolve(projectPath);
+    const cacheKey = `tree_${normalizedPath}`;
+
+    // Check cache unless force refresh is requested
+    if (!params.forceRefresh && this.cache.has(cacheKey)) {
+      const cached = this.cache.get(cacheKey)!;
+      const age = Date.now() - cached.timestamp;
+      
+      if (age < this.cacheExpiryMs) {
+        Logger.debug(`Using cached project tree analysis`, { 
+          path: projectPath, 
+          age: Math.round(age / 1000) + 's'
+        });
+        return cached.result;
+      } else {
+        // Remove expired cache entry
+        this.cache.delete(cacheKey);
+        Logger.debug(`Cache expired, will re-analyze`, { path: projectPath });
+      }
+    }
 
     Logger.info(`Analyzing project structure`, { path: projectPath });
 
@@ -31,9 +59,17 @@ export class FoundationAnalyzer {
         timeout: 10000,
       });
 
-      Logger.info(`Project tree analysis completed`, {
+      // Cache the result
+      this.cache.set(cacheKey, {
+        result,
+        timestamp: Date.now(),
+        path: projectPath
+      });
+
+      Logger.info(`Project tree analysis completed and cached`, {
         path: projectPath,
         outputSize: result.length,
+        cacheKey
       });
 
       return result;
@@ -53,14 +89,54 @@ export class FoundationAnalyzer {
           timeout: 5000,
         });
 
-        Logger.warn(`Using fallback directory listing`, { path: projectPath });
-        return `Project structure (fallback listing):\n${fallbackResult}`;
+        const result = `Project structure (fallback listing):\n${fallbackResult}`;
+        
+        // Cache the fallback result too
+        this.cache.set(cacheKey, {
+          result,
+          timestamp: Date.now(),
+          path: projectPath
+        });
+
+        Logger.warn(`Using fallback directory listing and cached result`, { path: projectPath });
+        return result;
       } catch (fallbackError) {
         throw new Error(
           `Both tree command and fallback failed: ${errorMessage}`
         );
       }
     }
+  }
+
+  /**
+   * Clear the cache for a specific path or all entries
+   */
+  clearCache(path?: string): void {
+    if (path) {
+      const normalizedPath = require('path').resolve(path);
+      const cacheKey = `tree_${normalizedPath}`;
+      this.cache.delete(cacheKey);
+      Logger.debug(`Cleared cache for path`, { path });
+    } else {
+      this.cache.clear();
+      Logger.debug(`Cleared all project tree cache`);
+    }
+  }
+
+  /**
+   * Get cache statistics for monitoring
+   */
+  getCacheStats(): { size: number; entries: Array<{ path: string; age: number }> } {
+    const now = Date.now();
+    const entries = Array.from(this.cache.values()).map(cached => ({
+      path: cached.path,
+      age: Math.round((now - cached.timestamp) / 1000) // age in seconds
+    }));
+
+    return {
+      size: this.cache.size,
+      entries
+    };
   }
 
   private validateParams(params: unknown): FoundationAnalyzerParams {

@@ -90,7 +90,7 @@ export function createContinueCommand(): Command {
             vision: baseVision,
             workingDirectory: options.directory,
             phase: determineStartingPhase(options),
-            maxIterations: parseInt(options.maxIterations, 10),
+            maxIterations: parseInt(options.maxIterations, 100),
             costBudget: parseFloat(options.costBudget),
             enableWebSearch: options.webSearch,
             enableExtendedContext: options.extendedContext,
@@ -274,7 +274,7 @@ function validateContinuationInputs(vision: string, options: any): void {
     );
   }
 
-  const maxIterations = parseInt(options.maxIterations, 10);
+  const maxIterations = parseInt(options.maxIterations, 100);
   if (isNaN(maxIterations) || maxIterations < 1 || maxIterations > 100) {
     throw new Error(
       "Max iterations must be between 1 and 100 for continuation"

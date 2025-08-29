@@ -29,6 +29,14 @@ export interface SystemPromptOptions {
   context?: string;
 }
 
+// NEW: Interface for conversational system prompt options
+export interface ConversationalSystemPromptOptions {
+  workingDirectory: string;
+  tools: Tool[];
+  context?: string;
+  userGoal?: string;
+}
+
 export interface ToolResultMessage {
   role: "user";
   content: Array<{
@@ -120,6 +128,71 @@ Begin autonomous execution now. Start by exploring the project structure and und
       vision: vision.substring(0, 100) + "...",
       phase,
       toolCount: tools.length,
+    });
+
+    return message;
+  }
+
+  // NEW: Build conversational system prompt for interactive conversations
+  buildConversationalSystemPrompt(
+    options: ConversationalSystemPromptOptions
+  ): ConversationMessage {
+    const { workingDirectory, tools, context, userGoal } = options;
+
+    const systemPrompt = `You are Claude, a helpful AI assistant with access to development tools. You're in a conversational mode where you should:
+
+🎯 PRIMARY GOAL: Have a meaningful conversation with the user to understand their needs and help them achieve their goals.
+
+WORKING DIRECTORY: ${workingDirectory}
+
+💬 CONVERSATION GUIDELINES:
+1. **Engage conversationally first** - Talk with the user to understand their project and goals
+2. **Use tools thoughtfully** - Only use tools when:
+   • The user specifically asks you to analyze, read, or modify something
+   • You need information to better answer their question
+   • It would genuinely help the conversation (not just because tools are available)
+3. **Ask before major actions** - Before running commands, writing files, or making changes, explain what you plan to do and why
+4. **Be curious and helpful** - Ask follow-up questions to better understand what the user wants to accomplish
+5. **Explain your reasoning** - When you do use tools, explain why you're using them and what you hope to learn
+
+🛠️ AVAILABLE TOOLS (use when appropriate):
+${this.formatToolDescriptions(tools)}
+
+💡 CONVERSATION STYLE:
+• Start by understanding what the user wants to work on
+• Be conversational and friendly
+• Offer suggestions and ask clarifying questions
+• Use tools to support the conversation, not drive it
+• When analyzing code or projects, explain what you find in a helpful way
+• Focus on being genuinely useful to the user's goals
+
+${userGoal ? `\nUSER'S STATED GOAL: ${userGoal}\n` : ""}
+${context ? `\nADDITIONAL CONTEXT:\n${context}` : ""}
+
+You're here to have a helpful conversation and assist with development tasks. What would you like to work on?`;
+
+    const message: ConversationMessage = {
+      role: "user",
+      content: systemPrompt,
+    };
+
+    // Add caching control for repeated system prompts
+    if (!this.systemPromptCached) {
+      message.content = [
+        {
+          type: "text",
+          text: systemPrompt,
+          cache_control: { type: "ephemeral" },
+        },
+      ];
+      this.systemPromptCached = true;
+    }
+
+    this.messages = [message];
+    Logger.debug("Built conversational system prompt", {
+      workingDirectory,
+      toolCount: tools.length,
+      hasUserGoal: !!userGoal,
     });
 
     return message;

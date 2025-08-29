@@ -200,9 +200,9 @@ function validateInputs(vision: string, options: any): void {
     );
   }
 
-  if (vision.length > 4000) {
+  if (vision.length > 8000) {
     throw new Error(
-      "Vision is too long. Please keep it under 4000 characters."
+      "Vision is too long. Please keep it under 8000 characters."
     );
   }
 
