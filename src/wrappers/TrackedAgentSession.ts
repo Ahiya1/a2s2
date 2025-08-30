@@ -12,6 +12,7 @@ import { Logger } from "../logging/Logger";
 import { ToolResult } from "../tools/ToolManager";
 
 export interface TrackedAgentSessionOptions extends AgentSessionOptions {
+  eventEmitter: ConversationEventEmitter;
   enableTracking?: boolean;
   persistenceConfig?: {
     enableAutoSave: boolean;
