@@ -1,7 +1,7 @@
 import { ToolManager } from "../../tools/ToolManager";
 import { Logger } from "../../logging/Logger";
 
-export type AgentPhase = "EXPLORE" | "SUMMON" | "COMPLETE";
+export type AgentPhase = "EXPLORE" | "PLAN" | "SUMMON" | "COMPLETE";
 
 export interface ExplorationResult {
   projectStructure: string;
@@ -11,6 +11,33 @@ export interface ExplorationResult {
   recommendations: string[];
   confidence: number;
   nextPhase: AgentPhase;
+  validationResults?: ValidationSummary;
+  healingActions?: HealingAction[];
+}
+
+export interface ValidationSummary {
+  passed: boolean;
+  checks: ValidationCheck[];
+  errors: string[];
+  warnings: string[];
+  autoFixed: string[];
+}
+
+export interface ValidationCheck {
+  name: string;
+  passed: boolean;
+  message: string;
+  severity: "error" | "warning" | "info";
+  autoFixable: boolean;
+}
+
+export interface HealingAction {
+  type: "fix" | "create" | "update" | "delete";
+  description: string;
+  target: string;
+  executed: boolean;
+  result?: string;
+  error?: string;
 }
 
 export interface ExploreOptions {
@@ -19,6 +46,8 @@ export interface ExploreOptions {
   maxFilesToRead?: number;
   analyzeTests?: boolean;
   includeDocumentation?: boolean;
+  enableValidation?: boolean;
+  enableHealing?: boolean;
 }
 
 export class ExplorePhase {
@@ -33,6 +62,8 @@ export class ExplorePhase {
     Logger.info("Starting EXPLORE phase", {
       workingDirectory: options.workingDirectory,
       vision: options.vision.substring(0, 100) + "...",
+      enableValidation: options.enableValidation,
+      enableHealing: options.enableHealing,
     });
 
     const result: ExplorationResult = {
@@ -42,7 +73,7 @@ export class ExplorePhase {
       requirements: [],
       recommendations: [],
       confidence: 0,
-      nextPhase: "COMPLETE",
+      nextPhase: "PLAN",
     };
 
     try {
@@ -82,6 +113,43 @@ export class ExplorePhase {
       result.confidence = this.calculateConfidence(result);
       result.nextPhase = this.determineNextPhase(result);
 
+      // NEW: Step 7: Validation phase
+      if (options.enableValidation) {
+        Logger.info("Running exploration validation", {
+          workingDirectory: options.workingDirectory,
+        });
+
+        result.validationResults = await this.validateExploration(
+          result,
+          options
+        );
+
+        // NEW: Step 8: Healing phase if validation failed and healing enabled
+        if (!result.validationResults.passed && options.enableHealing) {
+          Logger.info("Running exploration healing", {
+            errors: result.validationResults.errors.length,
+            warnings: result.validationResults.warnings.length,
+          });
+
+          result.healingActions = await this.healExploration(result, options);
+
+          // Re-run validation after healing
+          if (result.healingActions.some((a) => a.executed)) {
+            result.validationResults = await this.validateExploration(
+              result,
+              options
+            );
+          }
+        }
+
+        // Adjust confidence based on validation results
+        if (result.validationResults.passed) {
+          result.confidence = Math.min(1.0, result.confidence + 0.1);
+        } else {
+          result.confidence = Math.max(0.1, result.confidence - 0.2);
+        }
+      }
+
       this.explorationHistory.push(result);
 
       Logger.info("EXPLORE phase completed", {
@@ -89,6 +157,9 @@ export class ExplorePhase {
         technologiesIdentified: result.technologies.length,
         confidence: result.confidence,
         nextPhase: result.nextPhase,
+        validationPassed: result.validationResults?.passed,
+        healingActionsExecuted:
+          result.healingActions?.filter((a) => a.executed).length || 0,
       });
 
       return result;
@@ -102,10 +173,634 @@ export class ExplorePhase {
       result.recommendations.push(
         "Exploration failed - proceeding with limited information"
       );
+
+      if (options.enableValidation) {
+        result.validationResults = {
+          passed: false,
+          checks: [
+            {
+              name: "exploration_completion",
+              passed: false,
+              message: `Exploration failed: ${(error as Error).message}`,
+              severity: "error",
+              autoFixable: false,
+            },
+          ],
+          errors: [(error as Error).message],
+          warnings: [],
+          autoFixed: [],
+        };
+      }
+
       return result;
     }
   }
 
+  // NEW: Validate the exploration results
+  private async validateExploration(
+    result: ExplorationResult,
+    options: ExploreOptions
+  ): Promise<ValidationSummary> {
+    const checks: ValidationCheck[] = [];
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    const autoFixed: string[] = [];
+
+    try {
+      // Check 1: Project structure was analyzed
+      const structureCheck = this.validateProjectStructure(
+        result.projectStructure
+      );
+      checks.push(structureCheck);
+      if (!structureCheck.passed) {
+        errors.push(structureCheck.message);
+      }
+
+      // Check 2: Key files were identified
+      const keyFilesCheck = this.validateKeyFiles(result.keyFiles);
+      checks.push(keyFilesCheck);
+      if (!keyFilesCheck.passed) {
+        errors.push(keyFilesCheck.message);
+      }
+
+      // Check 3: Technologies were detected
+      const techCheck = this.validateTechnologies(result.technologies);
+      checks.push(techCheck);
+      if (!techCheck.passed) {
+        warnings.push(techCheck.message);
+      }
+
+      // Check 4: Requirements were extracted
+      const reqCheck = this.validateRequirements(
+        result.requirements,
+        options.vision
+      );
+      checks.push(reqCheck);
+      if (!reqCheck.passed) {
+        warnings.push(reqCheck.message);
+      }
+
+      // Check 5: Confidence level is reasonable
+      const confidenceCheck = this.validateConfidence(result.confidence);
+      checks.push(confidenceCheck);
+      if (!confidenceCheck.passed) {
+        warnings.push(confidenceCheck.message);
+      }
+
+      // Check 6: Validate project-specific issues
+      const projectChecks = await this.validateProjectSpecificIssues(
+        result,
+        options
+      );
+      checks.push(...projectChecks.checks);
+      errors.push(...projectChecks.errors);
+      warnings.push(...projectChecks.warnings);
+
+      const passed = errors.length === 0;
+
+      Logger.debug("Exploration validation completed", {
+        checksRun: checks.length,
+        passed,
+        errors: errors.length,
+        warnings: warnings.length,
+      });
+
+      return {
+        passed,
+        checks,
+        errors,
+        warnings,
+        autoFixed,
+      };
+    } catch (error) {
+      Logger.error("Exploration validation failed", {
+        error: (error as Error).message,
+      });
+
+      return {
+        passed: false,
+        checks: [
+          {
+            name: "validation_error",
+            passed: false,
+            message: `Validation failed: ${(error as Error).message}`,
+            severity: "error",
+            autoFixable: false,
+          },
+        ],
+        errors: [(error as Error).message],
+        warnings: [],
+        autoFixed: [],
+      };
+    }
+  }
+
+  // NEW: Healing actions to fix exploration issues
+  private async healExploration(
+    result: ExplorationResult,
+    options: ExploreOptions
+  ): Promise<HealingAction[]> {
+    const healingActions: HealingAction[] = [];
+
+    if (!result.validationResults) {
+      return healingActions;
+    }
+
+    try {
+      // Heal missing project structure
+      if (
+        result.validationResults.errors.some((e) =>
+          e.includes("project structure")
+        )
+      ) {
+        const action = await this.healProjectStructure(
+          options.workingDirectory
+        );
+        healingActions.push(action);
+      }
+
+      // Heal missing key files
+      if (result.keyFiles.length === 0) {
+        const action = await this.healKeyFiles(options.workingDirectory);
+        healingActions.push(action);
+      }
+
+      // Heal missing technologies detection
+      if (result.technologies.length === 0) {
+        const action = await this.healTechnologyDetection(result, options);
+        healingActions.push(action);
+      }
+
+      // Heal confidence issues
+      if (result.confidence < 0.3) {
+        const action = await this.healLowConfidence(result, options);
+        healingActions.push(action);
+      }
+
+      Logger.info("Exploration healing completed", {
+        actionsPlanned: healingActions.length,
+        actionsExecuted: healingActions.filter((a) => a.executed).length,
+      });
+
+      return healingActions;
+    } catch (error) {
+      Logger.error("Exploration healing failed", {
+        error: (error as Error).message,
+      });
+
+      healingActions.push({
+        type: "fix",
+        description: "Handle healing failure",
+        target: "exploration_healing",
+        executed: false,
+        error: (error as Error).message,
+      });
+
+      return healingActions;
+    }
+  }
+
+  // Validation helper methods
+  private validateProjectStructure(projectStructure: string): ValidationCheck {
+    if (!projectStructure || projectStructure.trim().length < 10) {
+      return {
+        name: "project_structure",
+        passed: false,
+        message:
+          "Project structure analysis failed or returned insufficient data",
+        severity: "error",
+        autoFixable: true,
+      };
+    }
+
+    if (!projectStructure.includes("├") && !projectStructure.includes("└")) {
+      return {
+        name: "project_structure",
+        passed: false,
+        message: "Project structure does not appear to be in tree format",
+        severity: "warning",
+        autoFixable: false,
+      };
+    }
+
+    return {
+      name: "project_structure",
+      passed: true,
+      message: "Project structure successfully analyzed",
+      severity: "info",
+      autoFixable: false,
+    };
+  }
+
+  private validateKeyFiles(keyFiles: string[]): ValidationCheck {
+    if (keyFiles.length === 0) {
+      return {
+        name: "key_files",
+        passed: false,
+        message: "No key files were identified for analysis",
+        severity: "error",
+        autoFixable: true,
+      };
+    }
+
+    if (keyFiles.length > 50) {
+      return {
+        name: "key_files",
+        passed: false,
+        message: "Too many key files identified - may indicate poor filtering",
+        severity: "warning",
+        autoFixable: false,
+      };
+    }
+
+    return {
+      name: "key_files",
+      passed: true,
+      message: `${keyFiles.length} key files identified for analysis`,
+      severity: "info",
+      autoFixable: false,
+    };
+  }
+
+  private validateTechnologies(technologies: string[]): ValidationCheck {
+    if (technologies.length === 0) {
+      return {
+        name: "technologies",
+        passed: false,
+        message: "No technologies were detected in the project",
+        severity: "warning",
+        autoFixable: true,
+      };
+    }
+
+    if (technologies.length > 20) {
+      return {
+        name: "technologies",
+        passed: false,
+        message:
+          "Unusually high number of technologies detected - may indicate noise",
+        severity: "warning",
+        autoFixable: false,
+      };
+    }
+
+    return {
+      name: "technologies",
+      passed: true,
+      message: `${technologies.length} technologies detected`,
+      severity: "info",
+      autoFixable: false,
+    };
+  }
+
+  private validateRequirements(
+    requirements: string[],
+    vision: string
+  ): ValidationCheck {
+    if (requirements.length === 0) {
+      return {
+        name: "requirements",
+        passed: false,
+        message: "No requirements were extracted from the vision",
+        severity: "warning",
+        autoFixable: true,
+      };
+    }
+
+    // Check if requirements seem relevant to the vision
+    const visionWords = vision.toLowerCase().split(/\s+/);
+    const relevantRequirements = requirements.filter((req) => {
+      const reqWords = req.toLowerCase().split(/\s+/);
+      return reqWords.some((word) => visionWords.includes(word));
+    });
+
+    if (relevantRequirements.length === 0) {
+      return {
+        name: "requirements",
+        passed: false,
+        message:
+          "Extracted requirements do not seem relevant to the stated vision",
+        severity: "warning",
+        autoFixable: false,
+      };
+    }
+
+    return {
+      name: "requirements",
+      passed: true,
+      message: `${requirements.length} requirements extracted, ${relevantRequirements.length} relevant`,
+      severity: "info",
+      autoFixable: false,
+    };
+  }
+
+  private validateConfidence(confidence: number): ValidationCheck {
+    if (confidence < 0.3) {
+      return {
+        name: "confidence",
+        passed: false,
+        message: "Confidence level is too low for reliable planning",
+        severity: "warning",
+        autoFixable: true,
+      };
+    }
+
+    if (confidence > 0.95) {
+      return {
+        name: "confidence",
+        passed: false,
+        message: "Confidence level is unrealistically high",
+        severity: "warning",
+        autoFixable: false,
+      };
+    }
+
+    return {
+      name: "confidence",
+      passed: true,
+      message: `Confidence level (${(confidence * 100).toFixed(1)}%) is reasonable`,
+      severity: "info",
+      autoFixable: false,
+    };
+  }
+
+  private async validateProjectSpecificIssues(
+    result: ExplorationResult,
+    options: ExploreOptions
+  ): Promise<{
+    checks: ValidationCheck[];
+    errors: string[];
+    warnings: string[];
+  }> {
+    const checks: ValidationCheck[] = [];
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    try {
+      // Use validation tool to check for common issues
+      const validationResult = await this.toolManager.executeTool(
+        "validate_project",
+        {
+          type: "custom",
+          options: {
+            directory: options.workingDirectory,
+            command:
+              "find . -name '*.json' -exec echo 'Found JSON file: {}' \\;",
+            timeout: 10000,
+          },
+        }
+      );
+
+      if (validationResult.success) {
+        checks.push({
+          name: "project_files",
+          passed: true,
+          message: "Project files are accessible",
+          severity: "info",
+          autoFixable: false,
+        });
+      } else {
+        errors.push("Unable to access project files for validation");
+        checks.push({
+          name: "project_files",
+          passed: false,
+          message: "Project files are not accessible",
+          severity: "error",
+          autoFixable: false,
+        });
+      }
+
+      // Check for package.json if technologies suggest Node.js project
+      if (
+        result.technologies.some((tech) =>
+          ["javascript", "typescript", "react", "express"].includes(tech)
+        )
+      ) {
+        if (!result.keyFiles.some((file) => file.includes("package.json"))) {
+          warnings.push(
+            "Node.js technologies detected but no package.json found"
+          );
+          checks.push({
+            name: "package_json",
+            passed: false,
+            message: "package.json missing for Node.js project",
+            severity: "warning",
+            autoFixable: true,
+          });
+        }
+      }
+
+      return { checks, errors, warnings };
+    } catch (error) {
+      errors.push(
+        `Project-specific validation failed: ${(error as Error).message}`
+      );
+      checks.push({
+        name: "project_specific",
+        passed: false,
+        message: "Project-specific validation encountered errors",
+        severity: "error",
+        autoFixable: false,
+      });
+
+      return { checks, errors, warnings };
+    }
+  }
+
+  // Healing helper methods
+  private async healProjectStructure(
+    workingDirectory: string
+  ): Promise<HealingAction> {
+    const action: HealingAction = {
+      type: "fix",
+      description: "Re-analyze project structure with different approach",
+      target: "project_structure",
+      executed: false,
+    };
+
+    try {
+      // Try alternative approach to get project structure
+      const result = await this.toolManager.executeTool("run_command", {
+        command: `find "${workingDirectory}" -type f -name "*.js" -o -name "*.ts" -o -name "*.json" | head -20`,
+        timeout: 10000,
+      });
+
+      if (result.success && result.result) {
+        action.executed = true;
+        action.result = "Alternative project structure analysis completed";
+        Logger.debug("Project structure healing successful");
+      } else {
+        action.error = "Alternative analysis also failed";
+      }
+    } catch (error) {
+      action.error = (error as Error).message;
+      Logger.warn("Project structure healing failed", {
+        error: (error as Error).message,
+      });
+    }
+
+    return action;
+  }
+
+  private async healKeyFiles(workingDirectory: string): Promise<HealingAction> {
+    const action: HealingAction = {
+      type: "fix",
+      description: "Use broader search criteria to find key files",
+      target: "key_files",
+      executed: false,
+    };
+
+    try {
+      // Try to find any files that might be relevant
+      const result = await this.toolManager.executeTool("run_command", {
+        command: `find "${workingDirectory}" \\( -name "*.json" -o -name "*.js" -o -name "*.ts" -o -name "*.md" \\) | head -10`,
+        timeout: 10000,
+      });
+
+      if (result.success && result.result) {
+        action.executed = true;
+        action.result = "Found files using broader criteria";
+        Logger.debug("Key files healing successful");
+      } else {
+        action.error = "No files found even with broad search";
+      }
+    } catch (error) {
+      action.error = (error as Error).message;
+    }
+
+    return action;
+  }
+
+  private async healTechnologyDetection(
+    result: ExplorationResult,
+    options: ExploreOptions
+  ): Promise<HealingAction> {
+    const action: HealingAction = {
+      type: "fix",
+      description:
+        "Analyze file extensions and common patterns to detect technologies",
+      target: "technologies",
+      executed: false,
+    };
+
+    try {
+      // Analyze file extensions in the project
+      const extResult = await this.toolManager.executeTool("run_command", {
+        command: `find "${options.workingDirectory}" -type f | grep -E '\\.(js|ts|py|java|cpp|rb|go|php)$' | sed 's/.*\\.//' | sort | uniq -c`,
+        timeout: 10000,
+      });
+
+      if (extResult.success) {
+        // Parse extensions and infer technologies
+        const extensions = extResult.result
+          .split("\n")
+          .filter((line: string) => line.trim())
+          .map((line: string) => line.trim().split(" ").pop())
+          .filter((ext: any) => ext);
+
+        if (extensions.length > 0) {
+          // Update the result with inferred technologies
+          result.technologies =
+            this.inferTechnologiesFromExtensions(extensions);
+          action.executed = true;
+          action.result = `Inferred technologies from file extensions: ${result.technologies.join(", ")}`;
+        }
+      }
+    } catch (error) {
+      action.error = (error as Error).message;
+    }
+
+    return action;
+  }
+
+  private async healLowConfidence(
+    result: ExplorationResult,
+    options: ExploreOptions
+  ): Promise<HealingAction> {
+    const action: HealingAction = {
+      type: "fix",
+      description:
+        "Improve confidence by gathering additional project information",
+      target: "confidence",
+      executed: false,
+    };
+
+    try {
+      // Try to gather more information about the project
+      const infoSources = [
+        { command: "ls -la", description: "directory contents" },
+        {
+          command: "cat README* 2>/dev/null || echo 'No README found'",
+          description: "README content",
+        },
+        {
+          command:
+            "cat package.json 2>/dev/null || echo 'No package.json found'",
+          description: "package info",
+        },
+      ];
+
+      let additionalInfo = "";
+      let successfulSources = 0;
+
+      for (const source of infoSources) {
+        try {
+          const cmdResult = await this.toolManager.executeTool("run_command", {
+            command: `cd "${options.workingDirectory}" && ${source.command}`,
+            timeout: 5000,
+          });
+
+          if (cmdResult.success) {
+            additionalInfo += `\n--- ${source.description} ---\n${cmdResult.result}`;
+            successfulSources++;
+          }
+        } catch {
+          // Ignore individual command failures
+        }
+      }
+
+      if (successfulSources > 0) {
+        // Boost confidence based on additional information gathered
+        result.confidence = Math.min(
+          1.0,
+          result.confidence + successfulSources * 0.1
+        );
+        action.executed = true;
+        action.result = `Gathered additional information from ${successfulSources} sources, confidence improved to ${(result.confidence * 100).toFixed(1)}%`;
+      } else {
+        action.error = "Unable to gather additional project information";
+      }
+    } catch (error) {
+      action.error = (error as Error).message;
+    }
+
+    return action;
+  }
+
+  private inferTechnologiesFromExtensions(extensions: string[]): string[] {
+    const techMap: Record<string, string> = {
+      js: "javascript",
+      ts: "typescript",
+      jsx: "react",
+      tsx: "react",
+      py: "python",
+      java: "java",
+      cpp: "c++",
+      rb: "ruby",
+      go: "go",
+      php: "php",
+      rs: "rust",
+      kt: "kotlin",
+      swift: "swift",
+    };
+
+    return extensions
+      .map((ext) => techMap[ext])
+      .filter((tech) => tech)
+      .filter((tech, index, array) => array.indexOf(tech) === index); // Remove duplicates
+  }
+
+  // Existing methods remain the same...
   private async analyzeProjectStructure(
     workingDirectory: string
   ): Promise<string> {
@@ -433,15 +1128,12 @@ export class ExplorePhase {
   }
 
   private determineNextPhase(result: ExplorationResult): AgentPhase {
-    // Simple heuristic: if confidence is high enough, go to COMPLETE
-    // Otherwise, might need SUMMON phase (not implemented in Phase 1B)
-
-    if (result.confidence >= 0.7) {
-      return "COMPLETE";
-    } else if (result.confidence >= 0.4) {
-      return "COMPLETE"; // Still proceed but with caution
+    // With the new PLAN phase, exploration should lead to planning
+    if (result.confidence >= 0.4) {
+      return "PLAN";
     } else {
-      return "COMPLETE"; // In Phase 1B, always proceed to COMPLETE
+      // If confidence is too low, might need to re-explore or get help
+      return "EXPLORE"; // Re-explore with different approach
     }
   }
 

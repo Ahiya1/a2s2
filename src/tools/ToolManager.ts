@@ -2,6 +2,8 @@ import { FileReader } from "./files/FileReader";
 import { FileWriter } from "./files/FileWriter";
 import { FoundationAnalyzer } from "./foundation/FoundationAnalyzer";
 import { ShellExecutor } from "./shell/ShellExecutor";
+import { GitTool } from "./git/GitTool";
+import { ValidationTool } from "./validation/ValidationTool";
 import { Logger } from "../logging/Logger";
 
 export interface Tool {
@@ -42,6 +44,12 @@ export class ToolManager {
     this.registerTool("read_files", new FileReader());
     this.registerTool("write_files", new FileWriter());
     this.registerTool("run_command", new ShellExecutor());
+
+    // NEW: Git integration tool
+    this.registerTool("git", new GitTool());
+
+    // NEW: Validation tool
+    this.registerTool("validate_project", new ValidationTool());
   }
 
   registerTool(name: string, tool: Tool): void {
