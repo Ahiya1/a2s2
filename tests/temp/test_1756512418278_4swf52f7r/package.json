@@ -1,0 +1,11 @@
+{
+  "name": "test-format-project",
+  "version": "1.0.0",
+  "scripts": {
+    "format": "prettier --write src",
+    "format:check": "prettier --check src"
+  },
+  "devDependencies": {
+    "prettier": "^3.0.0"
+  }
+}
