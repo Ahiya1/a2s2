@@ -18,14 +18,21 @@ keen's **revolutionary capability** is providing **every agent** with access to 
 
 ### Claude API Configuration
 
+**Based on a2s2 codebase analysis - CORRECT configuration:**
+
 ```typescript
 // Core configuration that MUST be used by all agents
 const KEEN_CLAUDE_CONFIG = {
-  model: "claude-3-5-sonnet-20241022",
-  max_tokens: 8192,
-  thinking: true,                    // CRITICAL: Enable thinking blocks
+  model: "claude-sonnet-4-20250514",
+  max_tokens: 16000,
+  thinking: {
+    type: "enabled" as const,
+    budget_tokens: 10000,
+  },
   enableExtendedContext: true,       // CRITICAL: Enable 1M context
-  contextWindowSize: 1000000,        // CRITICAL: Full 1M tokens
+  
+  // CRITICAL: Correct beta header from a2s2 codebase
+  betas: ["context-1m-2025-08-07"], // NOT "extended-context-2024-10"
   
   // Performance optimizations
   enablePromptCaching: true,         // Cache repeated system prompts
@@ -35,14 +42,51 @@ const KEEN_CLAUDE_CONFIG = {
   // Cost optimization (but never reduce context)
   costOptimizationLevel: "balanced", // balance | aggressive | conservative
   cachingStrategy: "aggressive",     // Cache everything possible
-  
-  // Beta features for enhanced capabilities
-  betas: [
-    "extended-context-2024-10",      // Enable 1M context window
-    "thinking-2024-10",             // Enable thinking blocks
-    "computer-use-2024-10"           // Future: tool use enhancements
-  ]
 };
+```
+
+### AnthropicConfigManager Integration
+
+**Study the a2s2 implementation at `/src/config/AnthropicConfig.ts`:**
+
+```typescript
+export class AnthropicConfigManager {
+  constructor(customConfig: Partial<AnthropicConfig> = {}) {
+    const defaultConfig: AnthropicConfig = {
+      apiKey: process.env.ANTHROPIC_API_KEY || "",
+      model: "claude-sonnet-4-20250514",
+      maxTokens: 16000,
+      thinkingBudget: 10000,
+      maxRetries: 3,
+      baseRetryDelay: 1000,
+      enableExtendedContext: false, // ⚠️ keen MUST override this to true
+      enableInterleaved: true,
+      enableWebSearch: true,
+      enableStreaming: true,
+    };
+    
+    // keen MUST override extended context
+    this.config = { 
+      ...defaultConfig, 
+      ...customConfig,
+      enableExtendedContext: true // FORCE enable for keen
+    };
+  }
+  
+  getBetaHeaders(): string[] {
+    const headers: string[] = [];
+    
+    if (this.config.enableInterleaved) {
+      headers.push("interleaved-thinking-2025-05-14");
+    }
+    
+    if (this.config.enableExtendedContext) {
+      headers.push("context-1m-2025-08-07"); // CORRECT header
+    }
+    
+    return headers;
+  }
+}
 ```
 
 ### Context Window Utilization
@@ -70,7 +114,6 @@ export class AgentSession {
     // CRITICAL: Always enable extended context
     const configManager = new AnthropicConfigManager({
       enableExtendedContext: true,        // NEVER allow this to be false
-      contextWindowSize: 1000000,         // NEVER reduce this
       enableWebSearch: options.enableWebSearch !== false,
       enableStreaming: options.enableStreaming !== false,
       showProgressIndicators: options.showProgress !== false,
@@ -89,14 +132,7 @@ export class AgentSession {
   }
   
   private validateContextConfiguration(): void {
-    const config = this.conversationManager.getConfig();
-    
-    if (config.contextWindowSize < 1000000) {
-      throw new Error(
-        `CRITICAL: Context window is ${config.contextWindowSize} but keen requires 1,000,000 tokens. ` +
-        `This violates keen's core architecture principles.`
-      );
-    }
+    const config = this.conversationManager.getConfigManager().getConfig();
     
     if (!config.enableExtendedContext) {
       throw new Error(
@@ -105,10 +141,18 @@ export class AgentSession {
       );
     }
     
+    const betaHeaders = this.conversationManager.getConfigManager().getBetaHeaders();
+    if (!betaHeaders.includes("context-1m-2025-08-07")) {
+      throw new Error(
+        `CRITICAL: Missing required beta header 'context-1m-2025-08-07' for 1M context. ` +
+        `Current headers: ${betaHeaders.join(", ")}`
+      );
+    }
+    
     Logger.info("Context validation passed", {
-      contextWindowSize: config.contextWindowSize,
       enableExtendedContext: config.enableExtendedContext,
-      enableThinking: config.thinking
+      betaHeaders: betaHeaders,
+      model: config.model
     });
   }
 }
@@ -119,67 +163,75 @@ export class AgentSession {
 ```typescript
 // Required: Enhanced ConversationManager for 1M context
 export class ConversationManager {
+  private configManager: AnthropicConfigManager;
   private contextOptimizer: ContextOptimizer;
-  private thinkingBlockManager: ThinkingBlockManager;
   private costTracker: CostTracker;
   
-  constructor(config: AnthropicConfig) {
+  constructor(config: Partial<AnthropicConfig>) {
+    this.configManager = new AnthropicConfigManager({
+      ...config,
+      enableExtendedContext: true // FORCE enable for keen
+    });
+    
     // Validate 1M context requirement
-    if (!config.enableExtendedContext || config.contextWindowSize < 1000000) {
+    if (!this.configManager.getConfig().enableExtendedContext) {
       throw new Error("keen requires 1M context window for all agents");
     }
     
     this.anthropic = new Anthropic({
-      apiKey: config.apiKey,
-      // Ensure beta features are enabled
-      defaultHeaders: {
-        'anthropic-beta': 'extended-context-2024-10,thinking-2024-10'
-      }
+      apiKey: this.configManager.getConfig().apiKey,
     });
     
-    this.contextOptimizer = new ContextOptimizer(config);
-    this.thinkingBlockManager = new ThinkingBlockManager();
+    this.contextOptimizer = new ContextOptimizer(this.configManager.getConfig());
     this.costTracker = new CostTracker();
   }
   
-  private buildRequestConfig(options: ConversationOptions): any {
-    const baseConfig = {
-      model: "claude-3-5-sonnet-20241022",
-      max_tokens: 8192,
-      thinking: true,                    // ALWAYS enable thinking
+  private async makeClaudeRequest(tools: Tool[], options: ConversationOptions): Promise<any> {
+    const config = this.configManager.getRequestConfig();
+    const messages = this.messageBuilder.getMessages();
+    
+    // Apply cost optimizations
+    const optimizedMessages = options.enablePromptCaching
+      ? this.costOptimizer.enablePromptCaching(messages)
+      : messages;
+    
+    // Force extended context
+    if (options.useExtendedContext !== false) {
+      this.configManager.updateConfig({ enableExtendedContext: true });
+    }
+    
+    const request = {
+      model: config.model,
+      max_tokens: config.max_tokens,
+      thinking: config.thinking,
       
       // CRITICAL: Extended context configuration
       messages: this.contextOptimizer.optimizeForFullContext(
-        this.messageBuilder.getMessages()
+        optimizedMessages
       ),
       
-      // Beta features for 1M context
-      betas: ['extended-context-2024-10', 'thinking-2024-10'],
+      // CRITICAL: Correct beta headers from a2s2
+      betas: this.configManager.getBetaHeaders(), // Includes 'context-1m-2025-08-07'
       
-      // Cost optimization (without reducing context)
-      ...(options.enablePromptCaching && {
-        system: this.contextOptimizer.addCachingHeaders(
-          this.messageBuilder.getSystemMessage()
-        )
-      })
+      tools: this.formatToolsForClaude(tools)
     };
     
     // Validate final configuration
-    this.validateRequestConfig(baseConfig);
-    return baseConfig;
+    this.validateRequestConfig(request);
+    return await this.anthropic.beta.messages.create(request);
   }
   
   private validateRequestConfig(config: any): void {
-    if (!config.thinking) {
+    if (!config.thinking || config.thinking.type !== 'enabled') {
       throw new Error("Thinking blocks must be enabled for keen agents");
     }
     
-    if (!config.betas?.includes('extended-context-2024-10')) {
-      throw new Error("Extended context beta must be enabled for keen agents");
+    if (!config.betas?.includes('context-1m-2025-08-07')) {
+      throw new Error("Extended context beta 'context-1m-2025-08-07' must be enabled for keen agents");
     }
     
     const estimatedTokens = this.contextOptimizer.estimateTokenUsage(config.messages);
-    if (estimatedTokens > 900000) { // Leave 100k buffer
+    if (estimatedTokens > 950000) { // Leave 50k buffer
       Logger.warn("Approaching context limit", {
         estimatedTokens,
         contextCapacity: 1000000,
@@ -291,77 +343,11 @@ export class ContextOptimizer {
 }
 ```
 
-## Thinking Block Management
-
-```typescript
-export class ThinkingBlockManager {
-  preserveThinkingBlocks(messages: ConversationMessage[]): ConversationMessage[] {
-    return messages.map(message => {
-      if (message.role === 'assistant' && Array.isArray(message.content)) {
-        // Ensure thinking blocks are properly structured
-        const structuredContent = message.content.map(block => {
-          if (block.type === 'thinking') {
-            return {
-              type: 'thinking',
-              thinking: block.thinking,
-              signature: block.signature || 'preserved_thinking',
-              // Add metadata for context management
-              metadata: {
-                preserved_at: new Date().toISOString(),
-                token_count: this.estimateTokens(block.thinking),
-                importance: this.assessThinkingImportance(block.thinking)
-              }
-            };
-          }
-          return block;
-        });
-        
-        return {
-          ...message,
-          content: structuredContent
-        };
-      }
-      return message;
-    });
-  }
-  
-  private assessThinkingImportance(thinking: string): 'high' | 'medium' | 'low' {
-    // Assess thinking block importance for pruning decisions
-    const importanceIndicators = {
-      high: [
-        /architectural decision/i,
-        /security consideration/i,
-        /breaking change/i,
-        /critical bug/i,
-        /performance impact/i
-      ],
-      medium: [
-        /implementation approach/i,
-        /design pattern/i,
-        /optimization/i,
-        /refactoring/i
-      ],
-      low: [
-        /syntax/i,
-        /formatting/i,
-        /minor/i
-      ]
-    };
-    
-    for (const [level, patterns] of Object.entries(importanceIndicators)) {
-      if (patterns.some(pattern => pattern.test(thinking))) {
-        return level as 'high' | 'medium' | 'low';
-      }
-    }
-    
-    return 'medium'; // Default to medium importance
-  }
-}
-```
-
 ## Cost Management with 1M Context
 
 ### Pricing Awareness
+
+**CORRECTED pricing based on a2s2 implementation:**
 
 ```typescript
 interface ContextCostCalculation {
@@ -373,16 +359,26 @@ interface ContextCostCalculation {
   estimated_cost_per_request: number;
 }
 
+// Based on a2s2 AnthropicConfig.ts
 const CLAUDE_PRICING_2024 = {
   standard: {  // ≤200K tokens
     input: 3.0 / 1_000_000,      // $3 per million input tokens
     output: 15.0 / 1_000_000,     // $15 per million output tokens
-    thinking: 15.0 / 1_000_000    // Thinking tokens = output pricing
+    thinking: 3.0 / 1_000_000     // Thinking tokens = input pricing
   },
-  extended: {  // >200K tokens
+  extended: {  // >200K tokens (1M context)
     input: 6.0 / 1_000_000,       // $6 per million input tokens  
     output: 22.5 / 1_000_000,     // $22.50 per million output tokens
-    thinking: 22.5 / 1_000_000    // Thinking tokens = output pricing
+    thinking: 6.0 / 1_000_000     // Thinking tokens = input pricing
+  }
+};
+
+// keen Credit Pricing (5x markup from actual Claude costs)
+const KEEN_CREDIT_PRICING = {
+  claude_cost_multiplier: 5.0,  // 5x markup as specified
+  
+  calculateCreditCost(claudeCostInDollars: number): number {
+    return claudeCostInDollars * this.claude_cost_multiplier;
   }
 };
 ```
@@ -400,7 +396,7 @@ export class CostOptimizer {
       enablePromptCaching: true,        // Cache system prompts aggressively
       intelligentPruning: true,         // Smart message pruning
       thinkingCompression: false,       // Don't compress thinking blocks
-      toolResultSummarization: true,    # Summarize verbose tool outputs
+      toolResultSummarization: true,    // Summarize verbose tool outputs
       
       // Cost reduction techniques
       cachingStrategy: 'aggressive',    // Cache everything possible
@@ -424,19 +420,94 @@ export class CostOptimizer {
     const isExtendedPricing = tokenUsage.inputTokens > 200_000;
     const pricing = isExtendedPricing ? CLAUDE_PRICING_2024.extended : CLAUDE_PRICING_2024.standard;
     
-    return {
-      pricing_tier: isExtendedPricing ? 'extended' : 'standard',
+    const claudeCost = {
       input_cost: tokenUsage.inputTokens * pricing.input,
       output_cost: tokenUsage.outputTokens * pricing.output,
       thinking_cost: (tokenUsage.thinkingTokens || 0) * pricing.thinking,
-      total_cost: 
+      total_claude_cost: 
         (tokenUsage.inputTokens * pricing.input) +
         (tokenUsage.outputTokens * pricing.output) +
-        ((tokenUsage.thinkingTokens || 0) * pricing.thinking),
+        ((tokenUsage.thinkingTokens || 0) * pricing.thinking)
+    };
+    
+    const creditCost = KEEN_CREDIT_PRICING.calculateCreditCost(claudeCost.total_claude_cost);
+    
+    return {
+      pricing_tier: isExtendedPricing ? 'extended' : 'standard',
+      claude_cost: claudeCost.total_claude_cost,
+      credit_cost: creditCost,
+      markup_multiplier: KEEN_CREDIT_PRICING.claude_cost_multiplier,
       
       // Cost optimization recommendations
       recommendations: this.generateCostRecommendations(tokenUsage, isExtendedPricing)
     };
+  }
+}
+```
+
+## Admin User Access
+
+### Privileged Admin Account
+
+**Special admin user for keen platform analytics and unlimited usage:**
+
+```typescript
+// Admin user configuration
+const KEEN_ADMIN_USER = {
+  email: 'ahiya.butman@gmail.com',
+  password: '2con-creator',
+  role: 'super_admin',
+  permissions: {
+    unlimited_credits: true,
+    bypass_rate_limits: true,
+    view_all_analytics: true,
+    manage_users: true,
+    system_monitoring: true
+  },
+  
+  features: {
+    cost_bypass: true,           // No credit deductions
+    priority_execution: true,    // Queue priority
+    advanced_analytics: true,    // Full system analytics
+    user_impersonation: true,    // Debug user issues
+    system_diagnostics: true     // Internal system metrics
+  }
+};
+
+// Credit manager override for admin
+export class CreditManager {
+  async deductCredits(
+    userId: string,
+    amount: number,
+    sessionId: string,
+    description: string
+  ): Promise<DatabaseOperationResult<CreditTransaction>> {
+    
+    // Check if user is admin
+    if (userId === KEEN_ADMIN_USER.email || 
+        await this.isAdminUser(userId)) {
+      Logger.info("Credit deduction bypassed for admin user", {
+        userId,
+        amount,
+        sessionId
+      });
+      
+      // Return mock transaction for admin
+      return {
+        success: true,
+        data: {
+          id: 'admin_bypass',
+          amount: 0, // No actual deduction
+          description: `Admin bypass: ${description}`,
+          created_at: new Date()
+        }
+      };
+    }
+    
+    // Normal credit deduction for regular users
+    return this.dbManager.executeUserTransaction(userId, async (connection) => {
+      // ... existing credit deduction logic
+    });
   }
 }
 ```
@@ -447,17 +518,18 @@ export class CostOptimizer {
 
 ```typescript
 describe('1M Context Window Validation', () => {
-  test('All agents must use 1M context window', async () => {
+  test('All agents must use 1M context window with correct beta headers', async () => {
     const agentSession = new AgentSession({
       vision: 'Test vision for context validation',
-      enableExtendedContext: true
     });
     
-    const config = agentSession.getConversationManager().getConfig();
+    const configManager = agentSession.getConversationManager().getConfigManager();
+    const config = configManager.getConfig();
+    const betaHeaders = configManager.getBetaHeaders();
     
     expect(config.enableExtendedContext).toBe(true);
-    expect(config.contextWindowSize).toBe(1_000_000);
-    expect(config.thinking).toBe(true);
+    expect(betaHeaders).toContain('context-1m-2025-08-07');
+    expect(config.model).toBe('claude-sonnet-4-20250514');
   });
   
   test('Context optimization preserves critical content', async () => {
@@ -475,193 +547,53 @@ describe('1M Context Window Validation', () => {
     expect(optimized[0].content).toContain('TASK:'); // System prompt content
   });
   
-  test('Thinking blocks are preserved across iterations', async () => {
-    const messageWithThinking = {
-      role: 'assistant',
-      content: [
-        {
-          type: 'thinking',
-          thinking: 'This is important architectural reasoning',
-          signature: 'architecture_decision'
-        },
-        {
-          type: 'text',
-          text: 'Based on my analysis...'
-        }
-      ]
-    };
+  test('Admin user bypasses all credit checks', async () => {
+    const creditManager = new CreditManager(dbManager);
     
-    const manager = new ThinkingBlockManager();
-    const preserved = manager.preserveThinkingBlocks([messageWithThinking]);
+    const result = await creditManager.deductCredits(
+      'ahiya.butman@gmail.com',
+      100.0,
+      'test_session',
+      'Admin test execution'
+    );
     
-    expect(preserved[0].content[0].type).toBe('thinking');
-    expect(preserved[0].content[0].thinking).toContain('architectural reasoning');
-  });
-  
-  test('Cost calculation accounts for extended pricing', () => {
-    const costOptimizer = new CostOptimizer();
-    
-    // Test extended pricing (>200K tokens)
-    const extendedUsage = {
-      inputTokens: 800_000,
-      outputTokens: 8_000,
-      thinkingTokens: 15_000
-    };
-    
-    const cost = costOptimizer.calculateContextCost(extendedUsage);
-    
-    expect(cost.pricing_tier).toBe('extended');
-    expect(cost.input_cost).toBe(800_000 * (6.0 / 1_000_000)); // Extended input pricing
-    expect(cost.total_cost).toBeGreaterThan(0);
+    expect(result.success).toBe(true);
+    expect(result.data.amount).toBe(0); // No deduction for admin
+    expect(result.data.id).toBe('admin_bypass');
   });
 });
-```
-
-### Integration Tests
-
-```typescript
-describe('keen 1M Context Integration', () => {
-  test('Recursive agents inherit 1M context', async () => {
-    const mainAgent = new AgentSession({
-      vision: 'Complex multi-agent task requiring recursive spawning',
-      enableExtendedContext: true
-    });
-    
-    // Mock agent spawning
-    const childAgent = mainAgent.spawnChildAgent({
-      subVision: 'Handle authentication subsystem',
-      inheritContext: true
-    });
-    
-    const childConfig = childAgent.getConversationManager().getConfig();
-    
-    expect(childConfig.contextWindowSize).toBe(1_000_000);
-    expect(childConfig.enableExtendedContext).toBe(true);
-  });
-  
-  test('WebSocket streaming with 1M context', async () => {
-    const streamingManager = new StreamingManager({
-      enableStreaming: true,
-      showProgress: true
-    });
-    
-    const contextData = generateContextData(950_000); // Near limit
-    
-    // Should handle large context in streaming mode
-    const streamResult = await streamingManager.handleLargeContext(contextData);
-    
-    expect(streamResult.success).toBe(true);
-    expect(streamResult.tokenCount).toBeLessThanOrEqual(1_000_000);
-  });
-});
-```
-
-## Performance Monitoring
-
-### Context Usage Metrics
-
-```typescript
-interface ContextMetrics {
-  session_id: string;
-  timestamp: string;
-  
-  // Context utilization
-  context_tokens_used: number;        // Current context size
-  context_utilization_percent: number; // % of 1M limit used
-  peak_context_usage: number;         // Maximum context used in session
-  
-  // Performance impact
-  response_time_ms: number;           // Response time with large context
-  thinking_token_count: number;       // Thinking tokens generated
-  context_processing_time: number;    // Time to process context
-  
-  // Cost tracking
-  cost_per_request: number;           // Cost of this request
-  cumulative_session_cost: number;    // Total session cost
-  pricing_tier: 'standard' | 'extended';
-  
-  // Optimization metrics
-  cache_hit_rate: number;             // % of cached context reused
-  pruning_effectiveness: number;      // Tokens saved through pruning
-  compression_ratio: number;          // Context compression achieved
-}
-```
-
-### Monitoring Dashboard
-
-```typescript
-export class ContextMonitoringService {
-  async trackContextUsage(sessionId: string, metrics: ContextMetrics): Promise<void> {
-    // Track context usage patterns
-    await this.database.saveContextMetrics(metrics);
-    
-    // Alert on concerning patterns
-    if (metrics.context_utilization_percent > 95) {
-      await this.alertService.sendAlert({
-        type: 'context_limit_approaching',
-        sessionId,
-        currentUsage: metrics.context_tokens_used,
-        limit: 1_000_000
-      });
-    }
-    
-    // Performance degradation warning
-    if (metrics.response_time_ms > 30_000) { // 30 seconds
-      await this.alertService.sendAlert({
-        type: 'performance_degradation',
-        sessionId,
-        responseTime: metrics.response_time_ms,
-        contextSize: metrics.context_tokens_used
-      });
-    }
-  }
-  
-  async generateContextReport(): Promise<ContextUsageReport> {
-    const metrics = await this.database.getContextMetrics({
-      timeRange: '24h',
-      aggregation: 'hourly'
-    });
-    
-    return {
-      average_context_usage: metrics.avgContextUsage,
-      peak_usage_sessions: metrics.peakUsageSessions,
-      cost_impact: metrics.extendedPricingPercentage,
-      optimization_opportunities: metrics.optimizationSuggestions,
-      performance_trends: metrics.performanceTrends
-    };
-  }
-}
 ```
 
 ## Implementation Checklist
 
 ### Phase 1: Core Implementation
-- [ ] **AgentSession** enforces 1M context for all agents
-- [ ] **ConversationManager** validates extended context configuration 
+- [ ] **AnthropicConfigManager** enforces 1M context with correct beta headers
+- [ ] **ConversationManager** validates 'context-1m-2025-08-07' header
 - [ ] **Context optimization** without reducing window size
-- [ ] **Cost tracking** with extended pricing awareness
-- [ ] **Thinking block preservation** across iterations
+- [ ] **Cost tracking** with 5x markup for credits
+- [ ] **Admin user** bypass implementation
 
 ### Phase 2: Advanced Features  
 - [ ] **Intelligent pruning** strategies for context management
 - [ ] **Context caching** for performance optimization
 - [ ] **Recursive agent** context inheritance
 - [ ] **Real-time monitoring** of context usage
-- [ ] **Cost prediction** for large context operations
+- [ ] **Cost prediction** for large context operations with credit conversion
 
 ### Phase 3: Production Optimization
 - [ ] **Performance benchmarking** with 1M context
-- [ ] **Cost optimization** strategies and recommendations
+- [ ] **Credit optimization** strategies and recommendations
 - [ ] **Context prefetching** and predictive loading
+- [ ] **Admin analytics** dashboard
 - [ ] **Comprehensive testing** of edge cases
-- [ ] **Documentation** and developer guides
 
 ## Success Criteria
 
-1. **Universal 1M Access**: 100% of agents use full 1M context window
+1. **Universal 1M Access**: 100% of agents use full 1M context window with correct beta headers
 2. **Performance**: Response times <30s even with large contexts
-3. **Cost Efficiency**: Competitive pricing despite extended context usage
+3. **Cost Efficiency**: Transparent 5x markup pricing with credit system
 4. **Reliability**: <0.1% context-related failures
-5. **Developer Experience**: Transparent context management without complexity
+5. **Admin Access**: Unlimited usage for ahiya.butman@gmail.com with full analytics
+6. **Developer Experience**: Transparent context management without complexity
 
-The 1M context window is keen's **fundamental competitive advantage** - enabling sophisticated reasoning and comprehensive understanding that competing platforms cannot match. Every implementation decision must preserve and optimize this capability while making it accessible and cost-effective for users.
+The 1M context window is keen's **fundamental competitive advantage** - enabling sophisticated reasoning and comprehensive understanding that competing platforms cannot match. Every implementation decision must preserve and optimize this capability while making it accessible and cost-effective for users, with special provisions for administrative access and analytics.

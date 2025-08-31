@@ -47,11 +47,13 @@ main-agent (handles authentication system)
 - **Workspace management** - automatic provisioning and cleanup
 - **Resource limits** - per-user quotas and rate limiting
 
-### 2. Credit Abstraction
-- **Agents never see costs** - gateway handles all billing transparently
+### 2. Credit System (No Packages)
+- **Pure credit-based pricing** - no subscription packages, only pay-per-use credits
+- **Agents never see costs** - gateway handles all billing transparently with 5x markup
 - **Usage-based pricing** - pay only for agent execution time and token usage
 - **Budget management** - set limits, get alerts, prevent overruns
 - **Cost optimization** - intelligent context management and caching
+- **5x markup model** - keen credits cost 5 times the actual Claude API costs
 
 ### 3. Real-time Visualization
 - **Live agent trees** - see recursive spawning in real-time
@@ -76,6 +78,28 @@ main-agent (handles authentication system)
 - **Git operations** - watch branches being created and merged
 - **Cost tracking** - running totals updated continuously
 - **Error handling** - immediate feedback on issues
+
+## Admin Access and Analytics
+
+### Privileged Admin User
+
+keen includes a special administrative account for platform oversight and analytics:
+
+**Admin Credentials:**
+- **Email:** ahiya.butman@gmail.com
+- **Password:** 2con-creator
+- **Role:** Super Administrator
+
+**Admin Privileges:**
+- **Unlimited credits** - no credit deductions for admin usage
+- **Bypass all rate limits** - unrestricted agent execution
+- **Full analytics access** - comprehensive platform metrics and insights
+- **User management** - view and manage all user accounts
+- **System monitoring** - real-time platform health and performance
+- **Priority execution** - admin agents get queue priority
+- **Advanced diagnostics** - internal system metrics and debugging
+
+The admin account enables platform oversight, debugging user issues, monitoring system health, and gathering usage analytics without credit constraints.
 
 ## Target Users
 
@@ -103,30 +127,30 @@ main-agent (handles authentication system)
 
 ### Credit-based Usage (Primary)
 - **Pay per execution** - charged based on actual agent usage and token consumption
+- **5x markup pricing** - keen credits cost 5 times actual Claude API costs for sustainability
 - **Transparent pricing** - clear costs for different types of operations
 - **No upfront costs** - only pay for what you use
 - **Volume discounts** - reduced rates for heavy usage
+- **No packages** - pure credit system without subscription tiers
 
-### Subscription Tiers
+### Credit Pricing Structure
 
-#### Individual ($29/month)
-- 10,000 credits included monthly
-- Basic dashboard and monitoring
-- Email support
-- Single user workspace
+#### Base Pricing (5x Claude API costs)
+- **Standard Context (≤200K tokens):**
+  - Input: $0.015 per 1K tokens (Claude: $0.003 × 5)
+  - Output: $0.075 per 1K tokens (Claude: $0.015 × 5)
+  - Thinking: $0.015 per 1K tokens (Claude: $0.003 × 5)
 
-#### Team ($99/month per 5 users)
-- 50,000 credits included monthly
-- Advanced dashboard with team collaboration
-- Shared workspaces and agent coordination
-- Priority support
+- **Extended Context (>200K tokens, 1M window):**
+  - Input: $0.030 per 1K tokens (Claude: $0.006 × 5)
+  - Output: $0.1125 per 1K tokens (Claude: $0.0225 × 5)
+  - Thinking: $0.030 per 1K tokens (Claude: $0.006 × 5)
 
-#### Enterprise ($500/month per 25 users)
-- 250,000 credits included monthly
-- Advanced analytics and reporting
-- Custom integrations and API access
-- Dedicated support and SLA
-- On-premise deployment options
+#### Credit Packages (for convenience, not subscriptions)
+- **Starter Pack:** $25 → 500 credits
+- **Developer Pack:** $100 → 2,200 credits (10% bonus)
+- **Professional Pack:** $500 → 12,000 credits (20% bonus)
+- **Enterprise Pack:** $2,000 → 50,000 credits (25% bonus)
 
 ### Additional Revenue Streams
 - **Enterprise custom deployments** - private cloud or on-premise installations
@@ -151,7 +175,7 @@ main-agent (handles authentication system)
 ### 1M Context Architecture
 - **Full context utilization** - no artificial limits on agent reasoning
 - **Intelligent management** - automatic optimization for performance
-- **Cost optimization** - smart caching and pruning strategies
+- **Cost optimization** - smart caching and pruning strategies with 5x markup transparency
 - **Thinking preservation** - maintain reasoning continuity across sessions
 
 ## Market Position
@@ -161,7 +185,7 @@ keen positions itself as the **"AWS for Autonomous Development"**:
 - **Infrastructure-as-a-Service** for autonomous software development
 - **Production-grade reliability** with enterprise security and compliance
 - **Developer-first experience** with powerful APIs and integrations
-- **Transparent pricing** with no hidden costs or vendor lock-in
+- **Transparent pricing** with clear 5x markup and no hidden costs or vendor lock-in
 
 ## Success Metrics
 
@@ -178,15 +202,18 @@ keen positions itself as the **"AWS for Autonomous Development"**:
 ### Business Metrics
 - **$1M ARR** within 12 months
 - **$10M ARR** within 24 months
-- **80% gross margins** through efficient infrastructure
+- **80% gross margins** through efficient infrastructure and 5x markup
 
 ### Technical Metrics  
 - **Sub-second response times** for agent spawning
 - **Real-time streaming** with <100ms latency
 - **99.99% data isolation** between users
+- **Admin analytics** providing comprehensive platform insights
 
 ## Vision Statement
 
-**keen democratizes autonomous software development by providing a production-grade, multi-tenant platform that enables developers worldwide to harness the power of recursive AI agents with complete transparency, real-time visibility, and enterprise-grade reliability.**
+**keen democratizes autonomous software development by providing a production-grade, multi-tenant platform that enables developers worldwide to harness the power of recursive AI agents with complete transparency, real-time visibility, enterprise-grade reliability, and straightforward credit-based pricing.**
 
-keen transforms software development from a manual, time-intensive process into an intelligent, collaborative effort between humans and autonomous agents, making sophisticated development capabilities accessible to developers of all skill levels and team sizes.
+keen transforms software development from a manual, time-intensive process into an intelligent, collaborative effort between humans and autonomous agents, making sophisticated development capabilities accessible to developers of all skill levels and team sizes while maintaining complete administrative oversight and analytics capabilities.
+
+With its revolutionary credit system (no packages), 1M context windows, and privileged admin access for platform management, keen sets a new standard for autonomous development platforms.

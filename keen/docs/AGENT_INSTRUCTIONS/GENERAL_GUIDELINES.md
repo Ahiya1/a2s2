@@ -9,8 +9,9 @@ You are implementing **keen** - a commercial, multi-tenant, authenticated develo
 ### 1. Agent Purity Principle (SACRED)
 
 **Agents must remain completely unaware of:**
+
 - Credit balances, costs, or billing information
-- User authentication details and session management  
+- User authentication details and session management
 - Multi-tenant concerns and user isolation
 - Business logic and commercial aspects
 - Rate limiting and usage restrictions
@@ -25,16 +26,18 @@ You are implementing **keen** - a commercial, multi-tenant, authenticated develo
 // This configuration is REQUIRED for all agents
 const config = {
   model: "claude-3-5-sonnet-20241022",
-  max_tokens: 8192,
+  max_tokens: 64000,
   thinking: true,
-  enableExtendedContext: true,        // CRITICAL: Must be true
-  contextWindowSize: 1000000,         // CRITICAL: Must be 1M tokens
+  enableExtendedContext: true, // CRITICAL: Must be true
+  contextWindowSize: 1000000, // CRITICAL: Must be 1M tokens
   betas: [
-    "extended-context-2024-10",       // Required beta feature
-    "thinking-2024-10"                // Required for thinking blocks
-  ]
+    "extended-context-2024-10", // Required beta feature
+    "thinking-2024-10", // Required for thinking blocks
+  ],
 };
 ```
+
+CHECK CURRENT IMPLEMENTATION AT
 
 ### 3. Multi-Tenant Isolation (ABSOLUTE)
 
@@ -81,31 +84,32 @@ main-agent
 
 ```typescript
 // Example test structure
-describe('UserAuthenticationService', () => {
+describe("UserAuthenticationService", () => {
   // Unit tests
-  describe('JWT Token Validation', () => {
-    test('validates valid JWT tokens');
-    test('rejects expired tokens');
-    test('handles malformed tokens');
+  describe("JWT Token Validation", () => {
+    test("validates valid JWT tokens");
+    test("rejects expired tokens");
+    test("handles malformed tokens");
   });
-  
+
   // Integration tests
-  describe('Authentication Flow', () => {
-    test('complete login flow with valid credentials');
-    test('multi-factor authentication flow');
-    test('session refresh flow');
+  describe("Authentication Flow", () => {
+    test("complete login flow with valid credentials");
+    test("multi-factor authentication flow");
+    test("session refresh flow");
   });
-  
+
   // Security tests
-  describe('Security Boundaries', () => {
-    test('prevents token injection attacks');
-    test('enforces rate limiting');
-    test('logs security events');
+  describe("Security Boundaries", () => {
+    test("prevents token injection attacks");
+    test("enforces rate limiting");
+    test("logs security events");
   });
 });
 ```
 
 **Required Test Types:**
+
 - **Unit Tests**: Individual function/method testing
 - **Integration Tests**: Component interaction testing
 - **End-to-End Tests**: Complete workflow testing
@@ -116,6 +120,7 @@ describe('UserAuthenticationService', () => {
 ### Code Quality Standards
 
 **TypeScript Configuration:**
+
 ```json
 {
   "compilerOptions": {
@@ -131,12 +136,10 @@ describe('UserAuthenticationService', () => {
 ```
 
 **ESLint Configuration:**
+
 ```json
 {
-  "extends": [
-    "@typescript-eslint/recommended",
-    "prettier"
-  ],
+  "extends": ["@typescript-eslint/recommended", "prettier"],
   "rules": {
     "@typescript-eslint/no-unused-vars": "error",
     "@typescript-eslint/explicit-function-return-type": "warn",
@@ -148,43 +151,48 @@ describe('UserAuthenticationService', () => {
 ### Security Requirements
 
 **Input Validation (ALWAYS):**
+
 ```typescript
 // All user inputs must be validated
 export function validateUserInput(input: unknown): UserInput {
   const schema = z.object({
     email: z.string().email(),
-    password: z.string().min(8).regex(/^(?=.*[A-Za-z])(?=.*\d)/),
-    vision: z.string().min(10).max(32000)
+    password: z
+      .string()
+      .min(8)
+      .regex(/^(?=.*[A-Za-z])(?=.*\d)/),
+    vision: z.string().min(10).max(32000),
   });
-  
+
   try {
     return schema.parse(input);
   } catch (error) {
-    throw new ValidationError('Invalid user input', error);
+    throw new ValidationError("Invalid user input", error);
   }
 }
 ```
 
 **Authentication Patterns:**
+
 ```typescript
 // JWT validation middleware
 export async function authenticateUser(
-  req: Request, 
-  res: Response, 
+  req: Request,
+  res: Response,
   next: NextFunction
 ): Promise<void> {
   const token = extractTokenFromHeader(req.headers.authorization);
-  
+
   if (!token) {
-    return res.status(401).json({ error: 'Authentication required' });
+    return res.status(401).json({ error: "Authentication required" });
   }
-  
+
   try {
     const payload = await verifyJWT(token);
     req.user = await getUserById(payload.sub);
     next();
   } catch (error) {
-    return res.status(401).json({ error: 'Invalid token' });
+    return res.status(401).json({ error: "Invalid token" });
   }
 }
 ```
@@ -196,27 +204,32 @@ export async function authenticateUser(
 **Before implementing any component, understand these a2s2 patterns:**
 
 #### Agent Execution Patterns
+
 - `src/agent/AgentSession.ts` - How agents execute with streaming and cancellation
 - `src/agent/phases/ExplorePhase.ts` - Self-healing project analysis
 - `src/agent/phases/PlanPhase.ts` - Sophisticated planning with risk assessment
 
 #### Tool Management
+
 - `src/tools/ToolManager.ts` - Unified tool ecosystem with validation
 - `src/tools/autonomy/CompletionTool.ts` - How agents signal completion
 - `src/tools/autonomy/PhaseReportingTool.ts` - Phase transition management
 
 #### Conversation Management
+
 - `src/conversation/ConversationManager.ts` - Claude API integration with 1M context
 - `src/conversation/StreamingManager.ts` - Real-time progress streaming
 - `src/conversation/MessageBuilder.ts` - Context management with thinking blocks
 - `src/conversation/CostOptimizer.ts` - Token counting and cost tracking
 
 #### Database Patterns
+
 - `src/database/DatabaseManager.ts` - Connection management and health monitoring
 - `src/database/ConversationDAO.ts` - Data access patterns with comprehensive analytics
 - `src/conversation/ConversationPersistence.ts` - Session persistence with cleanup
 
 #### CLI Patterns
+
 - `src/cli/commands/breathe.ts` - Direct autonomous execution
 - `src/cli/commands/converse.ts` - Interactive conversation mode
 - `src/cli/index.ts` - Command structure and error handling
@@ -251,7 +264,7 @@ class KeenAgentSession extends AgentSession {
   ) {
     super(options);
   }
-  
+
   async execute(options: AgentSessionOptions): Promise<AgentSessionResult> {
     // Add keen-specific enhancements
     const workspace = await this.createIsolatedWorkspace();
@@ -259,7 +272,7 @@ class KeenAgentSession extends AgentSession {
     await this.persistSessionState(result);
     return result;
   }
-  
+
   private async createIsolatedWorkspace(): Promise<string> {
     // Create isolated workspace for this user/session
   }
@@ -273,12 +286,12 @@ class KeenAgentSession extends AgentSession {
 ```typescript
 // Standardized error types
 export enum ErrorType {
-  AUTHENTICATION = 'AUTHENTICATION_ERROR',
-  AUTHORIZATION = 'AUTHORIZATION_ERROR', 
-  VALIDATION = 'VALIDATION_ERROR',
-  RESOURCE_LIMIT = 'RESOURCE_LIMIT_ERROR',
-  SYSTEM = 'SYSTEM_ERROR',
-  AGENT_EXECUTION = 'AGENT_EXECUTION_ERROR'
+  AUTHENTICATION = "AUTHENTICATION_ERROR",
+  AUTHORIZATION = "AUTHORIZATION_ERROR",
+  VALIDATION = "VALIDATION_ERROR",
+  RESOURCE_LIMIT = "RESOURCE_LIMIT_ERROR",
+  SYSTEM = "SYSTEM_ERROR",
+  AGENT_EXECUTION = "AGENT_EXECUTION_ERROR",
 }
 
 export interface ErrorResponse {
@@ -299,27 +312,28 @@ export interface ErrorResponse {
 
 ```typescript
 // Structured logging
-Logger.info('Agent session started', {
+Logger.info("Agent session started", {
   user_id: userId,
   session_id: sessionId,
-  vision: vision.substring(0, 100) + '...',
+  vision: vision.substring(0, 100) + "...",
   cost_budget: options.costBudget,
-  workspace_path: workspacePath
+  workspace_path: workspacePath,
 });
 
-Logger.error('Agent execution failed', {
+Logger.error("Agent execution failed", {
   user_id: userId,
   session_id: sessionId,
   error: error.message,
   stack: error.stack,
   phase: currentPhase,
-  iteration: iterationCount
+  iteration: iterationCount,
 });
 ```
 
 ## Performance Standards
 
 ### Response Time Targets
+
 - **Authentication**: <200ms
 - **Agent Spawning**: <2 seconds
 - **API Responses**: <500ms
@@ -327,6 +341,7 @@ Logger.error('Agent execution failed', {
 - **1M Context Processing**: <30 seconds
 
 ### Scalability Requirements
+
 - **Concurrent Users**: 10,000+
 - **Concurrent Sessions**: 1,000+
 - **Database Connections**: Efficient pooling
@@ -364,44 +379,46 @@ export async function executeAgentHandler(
 ): Promise<void> {
   // 1. Authentication already validated by middleware
   const { user, vision, options } = req.body;
-  
+
   // 2. Credit validation
   const creditCheck = await creditManager.validateSufficientCredits(
-    user.id, options.costBudget
+    user.id,
+    options.costBudget
   );
   if (!creditCheck.sufficient) {
     return res.status(402).json({
       success: false,
-      error: { type: 'INSUFFICIENT_CREDITS', ...creditCheck }
+      error: { type: "INSUFFICIENT_CREDITS", ...creditCheck },
     });
   }
-  
+
   // 3. Rate limiting
   const rateLimitCheck = await rateLimiter.checkLimit(user.id);
   if (!rateLimitCheck.allowed) {
     return res.status(429).json({
       success: false,
-      error: { type: 'RATE_LIMITED', ...rateLimitCheck }
+      error: { type: "RATE_LIMITED", ...rateLimitCheck },
     });
   }
-  
+
   // 4. Create isolated workspace
   const workspace = await workspaceManager.createUserWorkspace(
-    user.id, generateSessionId()
+    user.id,
+    generateSessionId()
   );
-  
+
   // 5. Sanitized execution (no business logic exposed)
   const agentSession = new KeenAgentSession(user.id, workspace.sessionId);
   const result = await agentSession.execute({
-    vision,  // Raw vision passed through
+    vision, // Raw vision passed through
     ...options,
-    workingDirectory: workspace.path // Isolated workspace
+    workingDirectory: workspace.path, // Isolated workspace
   });
-  
+
   // 6. Post-processing
   await creditManager.deductCredits(user.id, result.totalCost);
   await sessionManager.persistSession(result);
-  
+
   res.json({ success: true, ...result });
 }
 ```
@@ -411,22 +428,22 @@ export async function executeAgentHandler(
 ```typescript
 // All database access should use transactions
 export async function saveUserSession(
-  userId: string, 
+  userId: string,
   sessionData: SessionData
 ): Promise<DatabaseResult<string>> {
   return await databaseManager.executeTransaction(async (connection) => {
     // Insert session
     const sessionResult = await connection.execute(
-      'INSERT INTO agent_sessions (...) VALUES (...)',
+      "INSERT INTO agent_sessions (...) VALUES (...)",
       sessionData
     );
-    
+
     // Update user stats
     await connection.execute(
-      'UPDATE daily_usage_stats SET sessions_started = sessions_started + 1 WHERE user_id = ? AND date_bucket = CURRENT_DATE',
+      "UPDATE daily_usage_stats SET sessions_started = sessions_started + 1 WHERE user_id = ? AND date_bucket = CURRENT_DATE",
       [userId]
     );
-    
+
     return sessionResult.insertId;
   });
 }
@@ -468,6 +485,7 @@ git push origin phase-{N}-{component-name}
 ### Documentation Requirements
 
 **Every component must include:**
+
 - API documentation with examples
 - Architecture decisions and rationale
 - Security considerations

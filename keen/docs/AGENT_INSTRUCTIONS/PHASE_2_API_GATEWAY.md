@@ -2,18 +2,19 @@
 
 ## Mission
 
-Implement keen's **API Gateway layer** that handles ALL business logic, authentication, credit management, rate limiting, and user-facing concerns. This layer ensures agents remain **completely pure** and unaware of commercial aspects while providing production-grade security and scalability.
+Implement keen's **API Gateway layer** that handles ALL business logic, authentication, credit management (no packages), rate limiting, and user-facing concerns. This layer ensures agents remain **completely pure** and unaware of commercial aspects while providing production-grade security and scalability.
 
 ## Success Criteria
 
 - [ ] **Complete authentication system** with JWT tokens, API keys, and MFA support
-- [ ] **Credit management integration** with real-time balance checking and atomic deductions
-- [ ] **Rate limiting and abuse prevention** with per-user and per-tier limits
+- [ ] **Credit management integration** with real-time balance checking, 5x markup, and admin bypass
+- [ ] **Rate limiting and abuse prevention** with per-user limits and admin exemptions
 - [ ] **Request sanitization** ensuring agents receive clean, validated inputs
 - [ ] **WebSocket management** for real-time streaming coordination
 - [ ] **Audit logging** with comprehensive security and compliance trails
 - [ ] **Agent purity enforcement** - agents never see business logic
-- [ ] **Multi-tenant isolation** at the API layer
+- [ ] **Multi-tenant isolation** at the API layer with admin oversight
+- [ ] **Admin user privileges** with unlimited access and analytics
 - [ ] **80%+ test coverage** including security and load tests
 - [ ] **Production monitoring** with metrics, alerts, and health checks
 
@@ -23,16 +24,18 @@ Implement keen's **API Gateway layer** that handles ALL business logic, authenti
 
 **CRITICAL:** The API Gateway is the **ONLY** layer that knows about:
 - User authentication and sessions
-- Credit balances and billing
-- Rate limiting and quotas
-- Multi-tenant concerns
+- Credit balances and billing (5x markup)
+- Rate limiting and quotas (admin exemptions)
+- Multi-tenant concerns and user isolation
 - Business logic and commercial aspects
+- Admin privileges and unlimited access
 
 Agents receive **sanitized requests** with:
 - Clean vision/instructions
 - Isolated workspace paths
 - Pure development context
 - No business metadata
+- No indication of admin vs regular users
 
 ```typescript
 // BAD: Agent sees business logic
@@ -40,7 +43,7 @@ const agentRequest = {
   vision: "Create a todo app",
   userId: "user_123",           // ❌ Agent shouldn't know user ID
   creditBalance: 47.50,          // ❌ Agent shouldn't see credits
-  subscriptionTier: "team",      // ❌ Agent shouldn't know billing
+  isAdminUser: true,             // ❌ Agent shouldn't know admin status
   rateLimitRemaining: 245        // ❌ Agent shouldn't see limits
 };
 
@@ -84,8 +87,10 @@ export class AuthenticationService {
   ): Promise<AuthenticationResult> {
     const { email, password, mfaToken } = credentials;
     
-    // 1. Rate limiting check
-    await this.checkLoginRateLimit(email, clientInfo.ip);
+    // 1. Rate limiting check (skip for admin)
+    if (email !== 'ahiya.butman@gmail.com') {
+      await this.checkLoginRateLimit(email, clientInfo.ip);
+    }
     
     // 2. User lookup and password verification
     const user = await this.userDAO.getUserByEmail(email);
@@ -100,8 +105,8 @@ export class AuthenticationService {
       throw new AuthenticationError('Account suspended');
     }
     
-    // 4. MFA verification if enabled
-    if (user.mfaEnabled) {
+    // 4. MFA verification if enabled (skip for admin with correct password)
+    if (user.mfaEnabled && !(user.isAdmin && password === '2con-creator')) {
       if (!mfaToken) {
         throw new MFARequiredError('MFA token required');
       }
@@ -112,7 +117,7 @@ export class AuthenticationService {
       }
     }
     
-    // 5. Generate tokens
+    // 5. Generate tokens with admin privileges
     const accessToken = await this.generateAccessToken(user);
     const refreshToken = await this.generateRefreshToken(user, clientInfo);
     
@@ -120,15 +125,19 @@ export class AuthenticationService {
     await this.userDAO.updateLastLogin(user.id, clientInfo.ip);
     
     // 7. Audit successful login
-    await this.auditLogger.logSuccessfulLogin(user.id, clientInfo);
+    await this.auditLogger.logSuccessfulLogin(user.id, clientInfo, {
+      isAdmin: user.isAdmin,
+      adminPrivileges: user.adminPrivileges
+    });
     
     return {
       user: this.sanitizeUserForResponse(user),
       tokens: {
         access_token: accessToken,
         refresh_token: refreshToken,
-        expires_in: 900 // 15 minutes
-      }
+        expires_in: user.isAdmin ? 3600 : 900 // Admin tokens last 1 hour
+      },
+      adminAccess: user.isAdmin
     };
   }
   
@@ -136,10 +145,12 @@ export class AuthenticationService {
     const payload: JWTPayload = {
       sub: user.id,
       email: user.email,
-      subscription_tier: user.subscriptionTier,
+      role: user.role,
+      isAdmin: user.isAdmin,
+      adminPrivileges: user.adminPrivileges,
       scopes: this.getUserScopes(user),
       iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + 900 // 15 minutes
+      exp: Math.floor(Date.now() / 1000) + (user.isAdmin ? 3600 : 900) // Admin: 1h, User: 15min
     };
     
     return jwt.sign(payload, this.jwtSecret, { algorithm: 'HS256' });
@@ -153,6 +164,11 @@ export class AuthenticationService {
       const user = await this.userDAO.getUser(payload.sub);
       if (!user || user.accountStatus !== 'active') {
         throw new AuthenticationError('Invalid token');
+      }
+      
+      // Verify admin privileges haven't been revoked
+      if (payload.isAdmin && !user.isAdmin) {
+        throw new AuthenticationError('Admin privileges revoked');
       }
       
       return payload;
@@ -179,27 +195,30 @@ export class APIKeyService {
     userId: string,
     keyConfig: APIKeyConfig
   ): Promise<APIKeyResult> {
+    const user = await this.userDAO.getUser(userId);
+    
     // Generate secure API key
-    const keyValue = this.generateSecureAPIKey();
+    const keyValue = this.generateSecureAPIKey(user.isAdmin);
     const keyHash = await this.hashAPIKey(keyValue);
     
-    // Store API key with metadata
+    // Store API key with metadata and admin privileges
     const apiKey = await this.tokenDAO.createAPIKey({
       userId,
       tokenHash: keyHash,
       name: keyConfig.name,
       scopes: keyConfig.scopes,
-      rateLimitPerHour: keyConfig.rateLimitPerHour || 1000,
+      rateLimitPerHour: user.isAdmin ? null : (keyConfig.rateLimitPerHour || 1000),
+      bypassLimits: user.isAdmin,
       expiresAt: keyConfig.expiresAt
     });
     
-    // Return key only once (never stored in plaintext)
     return {
       id: apiKey.id,
       key: keyValue, // Only shown once!
       name: apiKey.name,
       scopes: apiKey.scopes,
       rateLimitPerHour: apiKey.rateLimitPerHour,
+      bypassLimits: apiKey.bypassLimits,
       createdAt: apiKey.createdAt
     };
   }
@@ -217,14 +236,16 @@ export class APIKeyService {
       throw new AuthenticationError('API key expired');
     }
     
-    // Check rate limit
-    const rateLimitCheck = await this.rateLimitService.checkAPIKeyLimit(
-      apiKey.id,
-      apiKey.rateLimitPerHour
-    );
-    
-    if (!rateLimitCheck.allowed) {
-      throw new RateLimitError('API key rate limit exceeded', rateLimitCheck);
+    // Check rate limit (skip for admin keys)
+    if (!apiKey.bypassLimits) {
+      const rateLimitCheck = await this.rateLimitService.checkAPIKeyLimit(
+        apiKey.id,
+        apiKey.rateLimitPerHour
+      );
+      
+      if (!rateLimitCheck.allowed) {
+        throw new RateLimitError('API key rate limit exceeded', rateLimitCheck);
+      }
     }
     
     // Update usage tracking
@@ -233,20 +254,21 @@ export class APIKeyService {
     return {
       userId: apiKey.userId,
       scopes: apiKey.scopes,
-      rateLimitRemaining: rateLimitCheck.remaining
+      rateLimitRemaining: apiKey.bypassLimits ? 'unlimited' : rateLimitCheck.remaining,
+      isAdmin: apiKey.bypassLimits,
+      adminPrivileges: apiKey.bypassLimits ? await this.getAdminPrivileges(apiKey.userId) : null
     };
   }
   
-  private generateSecureAPIKey(): string {
-    // Generate cryptographically secure API key
-    const prefix = 'ak_live_'; // or 'ak_test_' for test keys
+  private generateSecureAPIKey(isAdmin: boolean): string {
+    const prefix = isAdmin ? 'ak_admin_' : 'ak_live_';
     const randomBytes = crypto.randomBytes(32);
     return prefix + randomBytes.toString('hex');
   }
 }
 ```
 
-## Credit Management Integration
+## Credit Management Integration (No Packages)
 
 ### Pre-flight Credit Validation
 
@@ -263,7 +285,22 @@ export class CreditGatewayService {
     userId: string,
     agentRequest: AgentExecutionRequest
   ): Promise<CreditReservation> {
-    // 1. Estimate cost for this request
+    
+    // Check if user is admin (unlimited credits)
+    const isAdmin = await this.creditManager.isAdminUser(userId);
+    
+    if (isAdmin) {
+      return {
+        reservationId: `admin_bypass_${Date.now()}`,
+        reservedAmount: 0,
+        estimatedCost: 0,
+        remainingBalance: 999999.999999,
+        isAdmin: true,
+        unlimited: true
+      };
+    }
+    
+    // 1. Estimate Claude API cost for this request
     const costEstimate = await this.costEstimator.estimateAgentExecution({
       vision: agentRequest.vision,
       maxIterations: agentRequest.options.maxIterations,
@@ -271,23 +308,29 @@ export class CreditGatewayService {
       expectedComplexity: this.analyzeVisionComplexity(agentRequest.vision)
     });
     
+    const claudeCost = costEstimate.estimatedClaudeCostUSD;
+    const creditCost = claudeCost * 5.0; // 5x markup
+    
     // 2. Check if user has sufficient credits
     const balance = await this.creditManager.getBalance(userId);
     
-    if (balance.availableBalance < costEstimate.estimatedCost) {
+    if (balance.availableBalance < creditCost) {
       throw new InsufficientCreditsError({
-        required: costEstimate.estimatedCost,
+        required: creditCost,
         available: balance.availableBalance,
-        shortfall: costEstimate.estimatedCost - balance.availableBalance
+        shortfall: creditCost - balance.availableBalance,
+        claudeCost: claudeCost,
+        markupMultiplier: 5.0
       });
     }
     
     // 3. Reserve credits for this execution
     const reservation = await this.creditManager.reserveCredits(
       userId,
-      costEstimate.estimatedCost,
+      creditCost,
       {
         description: `Agent execution reservation`,
+        claudeCost: claudeCost,
         metadata: {
           visionPreview: agentRequest.vision.substring(0, 100),
           estimatedDuration: costEstimate.estimatedDuration
@@ -297,24 +340,42 @@ export class CreditGatewayService {
     
     return {
       reservationId: reservation.id,
-      reservedAmount: costEstimate.estimatedCost,
-      estimatedCost: costEstimate.estimatedCost,
-      remainingBalance: balance.availableBalance - costEstimate.estimatedCost
+      reservedAmount: creditCost,
+      estimatedCost: creditCost,
+      claudeCost: claudeCost,
+      markupMultiplier: 5.0,
+      remainingBalance: balance.availableBalance - creditCost
     };
   }
   
   async finalizeCredits(
     userId: string,
     reservationId: string,
-    actualCost: number,
+    actualClaudeCost: number,
     sessionId: string
   ): Promise<void> {
+    
+    // Skip for admin users
+    if (await this.creditManager.isAdminUser(userId)) {
+      await this.creditManager.logAdminBypass(
+        userId,
+        actualClaudeCost,
+        sessionId,
+        'Admin execution completed'
+      );
+      return;
+    }
+    
+    const actualCreditCost = actualClaudeCost * 5.0;
+    
     await this.creditManager.finalizeReservation(
       userId,
       reservationId,
-      actualCost,
+      actualCreditCost,
       {
         sessionId,
+        claudeCost: actualClaudeCost,
+        markupMultiplier: 5.0,
         description: `Agent execution completed`
       }
     );
@@ -334,9 +395,21 @@ export class RateLimitService {
   
   async checkUserRateLimit(
     userId: string,
-    subscriptionTier: SubscriptionTier
+    userRole: string = 'user'
   ): Promise<RateLimitResult> {
-    const limits = this.getTierLimits(subscriptionTier);
+    
+    // Admin users bypass all rate limits
+    if (userRole === 'super_admin' || userRole === 'admin') {
+      return {
+        allowed: true,
+        remaining: 'unlimited',
+        resetTime: null,
+        limit: 'unlimited',
+        isAdmin: true
+      };
+    }
+    
+    const limits = this.getTierLimits('individual'); // No packages, single tier
     const windowKey = `rate_limit:user:${userId}:${Math.floor(Date.now() / limits.windowMs)}`;
     
     const currentCount = await this.redis.incr(windowKey);
@@ -356,9 +429,20 @@ export class RateLimitService {
   
   async checkConcurrentSessions(
     userId: string,
-    subscriptionTier: SubscriptionTier
+    userRole: string = 'user'
   ): Promise<ConcurrencyCheckResult> {
-    const limits = this.getTierLimits(subscriptionTier);
+    
+    // Admin users bypass concurrency limits
+    if (userRole === 'super_admin' || userRole === 'admin') {
+      return {
+        allowed: true,
+        current: 'unlimited',
+        limit: 'unlimited',
+        isAdmin: true
+      };
+    }
+    
+    const limits = this.getTierLimits('individual');
     const activeSessionsKey = `active_sessions:${userId}`;
     
     const activeSessions = await this.redis.scard(activeSessionsKey);
@@ -371,29 +455,14 @@ export class RateLimitService {
     };
   }
   
-  private getTierLimits(tier: SubscriptionTier): RateLimits {
-    const limits = {
-      individual: {
-        requestsPerWindow: 1000,
-        windowMs: 3600000, // 1 hour
-        maxConcurrentSessions: 2,
-        maxAgentsPerSession: 10
-      },
-      team: {
-        requestsPerWindow: 5000,
-        windowMs: 3600000,
-        maxConcurrentSessions: 10, 
-        maxAgentsPerSession: 20
-      },
-      enterprise: {
-        requestsPerWindow: 50000,
-        windowMs: 3600000,
-        maxConcurrentSessions: 100,
-        maxAgentsPerSession: 50
-      }
+  private getTierLimits(tier: string): RateLimits {
+    // Single tier since no packages
+    return {
+      requestsPerWindow: 1000,
+      windowMs: 3600000, // 1 hour
+      maxConcurrentSessions: 5,
+      maxAgentsPerSession: 15
     };
-    
-    return limits[tier];
   }
 }
 ```
@@ -434,27 +503,29 @@ export class AgentExecutionGateway {
         webhookUrl
       });
       
-      // 3. Rate limiting checks
-      const rateLimitCheck = await this.rateLimitService.checkUserRateLimit(
-        user.id,
-        user.subscriptionTier
-      );
-      
-      if (!rateLimitCheck.allowed) {
-        return this.sendRateLimitError(res, rateLimitCheck);
+      // 3. Rate limiting checks (skip for admin)
+      if (!user.isAdmin) {
+        const rateLimitCheck = await this.rateLimitService.checkUserRateLimit(
+          user.id,
+          user.role
+        );
+        
+        if (!rateLimitCheck.allowed) {
+          return this.sendRateLimitError(res, rateLimitCheck);
+        }
+        
+        // 4. Concurrent session check (skip for admin)
+        const concurrencyCheck = await this.rateLimitService.checkConcurrentSessions(
+          user.id,
+          user.role
+        );
+        
+        if (!concurrencyCheck.allowed) {
+          return this.sendConcurrencyError(res, concurrencyCheck);
+        }
       }
       
-      // 4. Concurrent session check
-      const concurrencyCheck = await this.rateLimitService.checkConcurrentSessions(
-        user.id,
-        user.subscriptionTier
-      );
-      
-      if (!concurrencyCheck.allowed) {
-        return this.sendConcurrencyError(res, concurrencyCheck);
-      }
-      
-      // 5. Credit validation and reservation
+      // 5. Credit validation and reservation (admin bypass)
       const creditReservation = await this.creditService.validateAndReserveCredits(
         user.id,
         validatedRequest
@@ -465,7 +536,8 @@ export class AgentExecutionGateway {
         user.id,
         {
           sessionType: 'agent_execution',
-          visionHash: hashString(validatedRequest.vision)
+          visionHash: hashString(validatedRequest.vision),
+          isAdminSession: user.isAdmin
         }
       );
       
@@ -479,13 +551,17 @@ export class AgentExecutionGateway {
           enableStreaming: validatedRequest.options.enableStreaming !== false,
           showProgress: validatedRequest.options.showProgress !== false
         }
-        // ✅ NO user ID, credit info, subscription details, etc.
+        // ✅ NO user ID, credit info, admin status, etc.
       };
       
       // 8. Start agent execution (PURE - no business concerns)
       const agentSession = await this.agentManager.createSession(
         workspace.sessionId,
-        sanitizedRequest
+        sanitizedRequest,
+        {
+          isAdminSession: user.isAdmin, // Internal tracking only
+          bypassCreditDeduction: user.isAdmin
+        }
       );
       
       // 9. Start execution tracking
@@ -493,7 +569,8 @@ export class AgentExecutionGateway {
         user.id,
         workspace.sessionId,
         creditReservation.reservationId,
-        requestId
+        requestId,
+        user.isAdmin
       );
       
       // 10. Return immediate response with session info
@@ -506,6 +583,10 @@ export class AgentExecutionGateway {
           current_phase: 'EXPLORE',
           streaming_url: `wss://ws.keen.dev/sessions/${workspace.sessionId}`,
           estimated_cost: creditReservation.estimatedCost,
+          claude_cost: creditReservation.claudeCost,
+          markup_multiplier: creditReservation.markupMultiplier,
+          is_admin_session: user.isAdmin,
+          credit_bypass: creditReservation.isAdmin || false,
           created_at: new Date().toISOString()
         },
         credit_reserved: creditReservation.reservedAmount,
@@ -518,7 +599,9 @@ export class AgentExecutionGateway {
         sessionId: workspace.sessionId,
         requestId,
         vision: validatedRequest.vision.substring(0, 200),
-        estimatedCost: creditReservation.estimatedCost
+        estimatedCost: creditReservation.estimatedCost,
+        isAdminSession: user.isAdmin,
+        creditBypass: creditReservation.isAdmin || false
       });
       
     } catch (error) {
@@ -538,34 +621,116 @@ export class AgentExecutionGateway {
         requestId,
         userId: req.user?.id,
         error: error.message,
-        duration
+        duration,
+        isAdmin: req.user?.isAdmin || false
       });
       
       return this.sendInternalError(res, requestId);
     }
   }
   
-  private async validateAgentRequest(
-    request: unknown
-  ): Promise<ValidatedAgentRequest> {
-    const schema = z.object({
-      vision: z.string()
-        .min(10, 'Vision must be at least 10 characters')
-        .max(32000, 'Vision too long (max 32,000 characters)'),
-      options: z.object({
-        maxIterations: z.number().min(1).max(200).optional(),
-        costBudget: z.number().min(0.1).max(1000).optional(),
-        enableWebSearch: z.boolean().optional(),
-        enableStreaming: z.boolean().optional(),
-        showProgress: z.boolean().optional()
-      }).optional().default({}),
-      webhookUrl: z.string().url().optional()
+  private sendInsufficientCreditsError(
+    res: Response, 
+    error: InsufficientCreditsError, 
+    requestId: string
+  ): void {
+    res.status(402).json({
+      success: false,
+      error: {
+        type: 'INSUFFICIENT_CREDITS',
+        code: 'PAYMENT_REQUIRED',
+        message: 'Insufficient credits for this operation',
+        details: {
+          required: error.required,
+          available: error.available,
+          shortfall: error.shortfall,
+          claude_cost: error.claudeCost,
+          markup_multiplier: error.markupMultiplier,
+          credit_packages: {
+            starter: { amount: 25, credits: 500 },
+            developer: { amount: 100, credits: 2200, bonus: '10%' },
+            professional: { amount: 500, credits: 12000, bonus: '20%' },
+            enterprise: { amount: 2000, credits: 50000, bonus: '25%' }
+          }
+        }
+      },
+      request_id: requestId
     });
+  }
+}
+```
+
+### Admin Analytics Endpoint
+
+```typescript
+export class AdminAnalyticsController {
+  constructor(
+    private analyticsDAO: AnalyticsDAO,
+    private auditLogger: AuditLogger
+  ) {}
+  
+  async getSystemAnalytics(
+    req: AuthenticatedRequest,
+    res: Response
+  ): Promise<void> {
+    const user = req.user;
+    
+    // Verify admin privileges
+    if (!user.isAdmin || !user.adminPrivileges?.view_all_analytics) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          type: 'FORBIDDEN',
+          code: 'INSUFFICIENT_PRIVILEGES',
+          message: 'Admin privileges required for analytics access'
+        }
+      });
+    }
     
     try {
-      return schema.parse(request);
+      const timeRange = req.query.range as 'day' | 'week' | 'month' || 'day';
+      const analytics = await this.analyticsDAO.getAdminAnalytics(user.id, timeRange);
+      
+      // Audit admin analytics access
+      await this.auditLogger.logAdminAction({
+        adminUserId: user.id,
+        action: 'view_analytics',
+        timeRange,
+        timestamp: new Date()
+      });
+      
+      res.json({
+        success: true,
+        analytics: {
+          ...analytics,
+          credit_system: {
+            markup_multiplier: 5.0,
+            no_packages: true,
+            admin_bypasses: analytics.costAnalysis.adminBypasses
+          }
+        },
+        metadata: {
+          generated_at: new Date().toISOString(),
+          time_range: timeRange,
+          admin_user: user.email
+        }
+      });
+      
     } catch (error) {
-      throw new ValidationError('Invalid request format', error);
+      await this.auditLogger.logError({
+        adminUserId: user.id,
+        action: 'analytics_error',
+        error: error.message
+      });
+      
+      res.status(500).json({
+        success: false,
+        error: {
+          type: 'SYSTEM_ERROR',
+          code: 'ANALYTICS_ERROR',
+          message: 'Failed to retrieve analytics data'
+        }
+      });
     }
   }
 }
@@ -587,20 +752,10 @@ export class WebSocketGateway {
     this.setupWebSocketServer();
   }
   
-  private setupWebSocketServer(): void {
-    this.wss = new WebSocketServer({
-      port: parseInt(process.env.WEBSOCKET_PORT || '3001'),
-      verifyClient: this.verifyWebSocketClient.bind(this)
-    });
-    
-    this.wss.on('connection', this.handleConnection.bind(this));
-  }
-  
   private async verifyWebSocketClient(
     info: { origin: string; secure: boolean; req: IncomingMessage }
   ): Promise<boolean> {
     try {
-      // Extract token from query string or header
       const url = new URL(info.req.url!, `ws://localhost:${this.wss.port}`);
       const token = url.searchParams.get('token') || 
                    info.req.headers.authorization?.replace('Bearer ', '');
@@ -612,6 +767,8 @@ export class WebSocketGateway {
       
       // Attach user info to request
       (info.req as any).userId = payload.sub;
+      (info.req as any).isAdmin = payload.isAdmin;
+      (info.req as any).adminPrivileges = payload.adminPrivileges;
       (info.req as any).sessionFilters = url.searchParams.get('sessions')?.split(',') || [];
       
       return true;
@@ -621,20 +778,24 @@ export class WebSocketGateway {
   }
   
   private handleConnection(ws: WebSocket, req: IncomingMessage): void {
-    const userId = (req as any).userId;
-    const sessionFilters = (req as any).sessionFilters;
     const connectionId = generateConnectionId();
+    const userId = (req as any).userId;
+    const isAdmin = (req as any).isAdmin;
+    const adminPrivileges = (req as any).adminPrivileges;
+    const sessionFilters = (req as any).sessionFilters;
     
-    const authenticatedWs: AuthenticatedWebSocket = {
+    const connection: AuthenticatedWebSocket = {
       ws,
       userId,
+      isAdmin,
+      adminPrivileges,
       sessionFilters,
       connectionId,
       connectedAt: new Date(),
       lastPingAt: new Date()
     };
     
-    this.connections.set(connectionId, authenticatedWs);
+    this.connections.set(connectionId, connection);
     
     // Setup event handlers
     ws.on('message', (data) => this.handleMessage(connectionId, data));
@@ -644,37 +805,46 @@ export class WebSocketGateway {
     // Start heartbeat
     this.startHeartbeat(connectionId);
     
-    // Send welcome message
+    // Send welcome message with admin status
     this.sendToConnection(connectionId, {
       type: 'connection_established',
       data: {
         connectionId,
         userId,
-        sessionFilters
+        adminAccess: isAdmin,
+        sessionFilters,
+        privileges: isAdmin ? adminPrivileges : null
       }
+    });
+    
+    Logger.info('WebSocket connection established', {
+      connectionId,
+      userId,
+      isAdmin,
+      sessionFilters: sessionFilters.length
     });
   }
   
   async broadcastToUser(
     userId: string,
-    event: StreamingEvent
+    event: StreamingEvent,
+    adminOnly: boolean = false
   ): Promise<void> {
-    const userConnections = Array.from(this.connections.values())
+    let userConnections = Array.from(this.connections.values())
       .filter(conn => conn.userId === userId);
+    
+    // If admin-only event, filter for admin connections
+    if (adminOnly) {
+      userConnections = userConnections.filter(conn => conn.isAdmin);
+    }
     
     for (const connection of userConnections) {
       // Check if connection is interested in this session
       if (connection.sessionFilters.length === 0 ||
-          connection.sessionFilters.includes(event.session_id)) {
+          connection.sessionFilters.includes(event.session_id) ||
+          (connection.isAdmin && connection.adminPrivileges?.view_all_sessions)) {
         this.sendToConnection(connection.connectionId, event);
       }
-    }
-  }
-  
-  private sendToConnection(connectionId: string, data: any): void {
-    const connection = this.connections.get(connectionId);
-    if (connection && connection.ws.readyState === WebSocket.OPEN) {
-      connection.ws.send(JSON.stringify(data));
     }
   }
 }
@@ -706,18 +876,24 @@ export function authenticateRequest() {
       }
       
       let user: User;
+      let authMethod: 'jwt' | 'api_key';
       
       if (authHeader.startsWith('Bearer ')) {
         // JWT token
         const token = authHeader.substring(7);
         const payload = await authService.verifyAccessToken(token);
         user = await userDAO.getUser(payload.sub);
+        authMethod = 'jwt';
       } else if (authHeader.startsWith('ApiKey ')) {
         // API key
         const apiKey = authHeader.substring(7);
         const validation = await apiKeyService.validateAPIKey(apiKey);
         user = await userDAO.getUser(validation.userId);
+        authMethod = 'api_key';
+        
+        // Add API key specific info
         (req as any).apiKeyScopes = validation.scopes;
+        (req as any).apiKeyIsAdmin = validation.isAdmin;
       } else {
         return res.status(401).json({
           success: false,
@@ -740,7 +916,14 @@ export function authenticateRequest() {
         });
       }
       
-      (req as AuthenticatedRequest).user = user;
+      // Enhance user object with admin info
+      const enhancedUser = {
+        ...user,
+        authMethod,
+        tokenIsAdmin: authMethod === 'api_key' ? (req as any).apiKeyIsAdmin : user.isAdmin
+      };
+      
+      (req as AuthenticatedRequest).user = enhancedUser;
       next();
       
     } catch (error) {
@@ -774,44 +957,67 @@ export function authenticateRequest() {
 
 ```typescript
 describe('API Gateway Security', () => {
-  test('blocks unauthenticated requests', async () => {
-    const response = await request(app)
-      .post('/agents/execute')
-      .send({ vision: 'Test vision' });
-      
-    expect(response.status).toBe(401);
-    expect(response.body.error.type).toBe('AUTHENTICATION_ERROR');
-  });
-  
-  test('enforces rate limits per subscription tier', async () => {
-    const user = await createTestUser({ subscriptionTier: 'individual' });
-    const token = await generateTestToken(user);
+  test('admin user bypasses rate limits', async () => {
+    const adminToken = await generateTestToken('admin-user-id');
+    const regularToken = await generateTestToken('regular-user-id');
     
-    // Individual tier allows 1000 requests/hour
-    // Simulate rapid requests
-    const promises = Array(1001).fill(0).map(() => 
+    // Admin should bypass rate limits
+    const adminRequests = Array(2000).fill(0).map(() => 
       request(app)
         .get('/credits/balance')
-        .set('Authorization', `Bearer ${token}`)
+        .set('Authorization', `Bearer ${adminToken}`)
     );
     
-    const responses = await Promise.all(promises);
-    const rateLimited = responses.filter(r => r.status === 429);
+    const adminResponses = await Promise.all(adminRequests);
+    const adminRateLimited = adminResponses.filter(r => r.status === 429);
     
-    expect(rateLimited.length).toBeGreaterThan(0);
+    expect(adminRateLimited.length).toBe(0); // No rate limiting for admin
+    
+    // Regular user should be rate limited
+    const regularRequests = Array(1001).fill(0).map(() => 
+      request(app)
+        .get('/credits/balance')
+        .set('Authorization', `Bearer ${regularToken}`)
+    );
+    
+    const regularResponses = await Promise.all(regularRequests);
+    const regularRateLimited = regularResponses.filter(r => r.status === 429);
+    
+    expect(regularRateLimited.length).toBeGreaterThan(0); // Rate limited
+  });
+  
+  test('admin user gets unlimited credits', async () => {
+    const adminUser = await createTestAdminUser();
+    const adminToken = await generateTestToken(adminUser.id);
+    
+    // Start expensive agent execution
+    const response = await request(app)
+      .post('/agents/execute')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        vision: 'Complex high-cost agent execution',
+        options: { maxIterations: 100 }
+      });
+      
+    expect(response.status).toBe(200);
+    expect(response.body.session.credit_bypass).toBe(true);
+    expect(response.body.session.is_admin_session).toBe(true);
+    expect(response.body.credit_reserved).toBe(0);
   });
   
   test('prevents agent access to business logic', async () => {
-    // Mock agent execution to verify sanitized request
     const agentManager = {
-      createSession: jest.fn().mockImplementation((sessionId, request) => {
+      createSession: jest.fn().mockImplementation((sessionId, request, options) => {
         // Verify request contains ONLY pure agent data
         expect(request).not.toHaveProperty('userId');
         expect(request).not.toHaveProperty('creditBalance');
-        expect(request).not.toHaveProperty('subscriptionTier');
+        expect(request).not.toHaveProperty('isAdmin');
         expect(request).toHaveProperty('vision');
         expect(request).toHaveProperty('workingDirectory');
         expect(request.workingDirectory).toMatch(/\/workspaces\/.+/);
+        
+        // Options should not contain business metadata
+        expect(options.isAdminSession).toBeDefined(); // Internal tracking only
         
         return { id: 'session_123', sessionId };
       })
@@ -822,7 +1028,12 @@ describe('API Gateway Security', () => {
       workspaceManager, agentManager, auditLogger
     );
     
-    await gateway.executeAgent(authenticatedRequest, mockResponse);
+    const adminRequest = createAuthenticatedRequest({
+      isAdmin: true,
+      adminPrivileges: { unlimited_credits: true }
+    });
+    
+    await gateway.executeAgent(adminRequest, mockResponse);
     
     expect(agentManager.createSession).toHaveBeenCalledWith(
       expect.any(String),
@@ -830,8 +1041,46 @@ describe('API Gateway Security', () => {
         vision: expect.any(String),
         workingDirectory: expect.stringMatching(/\/workspaces\/.+/),
         options: expect.any(Object)
+      }),
+      expect.objectContaining({
+        isAdminSession: true,
+        bypassCreditDeduction: true
       })
     );
+  });
+});
+```
+
+### Admin Analytics Tests
+
+```typescript
+describe('Admin Analytics', () => {
+  test('admin can access system analytics', async () => {
+    const adminToken = await generateAdminToken();
+    
+    const response = await request(app)
+      .get('/admin/analytics?range=day')
+      .set('Authorization', `Bearer ${adminToken}`);
+      
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.analytics).toBeDefined();
+    expect(response.body.analytics.credit_system).toEqual({
+      markup_multiplier: 5.0,
+      no_packages: true,
+      admin_bypasses: expect.any(Number)
+    });
+  });
+  
+  test('regular user cannot access admin analytics', async () => {
+    const regularToken = await generateTestToken('regular-user');
+    
+    const response = await request(app)
+      .get('/admin/analytics')
+      .set('Authorization', `Bearer ${regularToken}`);
+      
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe('INSUFFICIENT_PRIVILEGES');
   });
 });
 ```
@@ -840,28 +1089,40 @@ describe('API Gateway Security', () => {
 
 ```typescript
 describe('API Gateway Performance', () => {
-  test('handles 1000 concurrent authentication requests', async () => {
-    const users = await createTestUsers(100);
-    const tokens = await Promise.all(users.map(generateTestToken));
+  test('handles admin and regular users concurrently', async () => {
+    const adminTokens = await generateAdminTokens(10);
+    const regularTokens = await generateTestTokens(990);
     
     const startTime = Date.now();
     
-    // 1000 concurrent requests
-    const promises = Array(1000).fill(0).map((_, i) => 
+    // Mixed load: admin + regular users
+    const adminRequests = adminTokens.map(token => 
       request(app)
         .get('/credits/balance')
-        .set('Authorization', `Bearer ${tokens[i % tokens.length]}`)
+        .set('Authorization', `Bearer ${token}`)
     );
     
-    const responses = await Promise.all(promises);
+    const regularRequests = regularTokens.map(token => 
+      request(app)
+        .get('/credits/balance')
+        .set('Authorization', `Bearer ${token}`)
+    );
+    
+    const allRequests = [...adminRequests, ...regularRequests];
+    const responses = await Promise.all(allRequests);
     const duration = Date.now() - startTime;
     
-    // All requests should succeed
-    const successful = responses.filter(r => r.status === 200);
-    expect(successful.length).toBe(1000);
+    // All admin requests should succeed
+    const adminResponses = responses.slice(0, 10);
+    expect(adminResponses.every(r => r.status === 200)).toBe(true);
+    
+    // Some regular requests may be rate limited
+    const regularResponses = responses.slice(10);
+    const regularSuccesses = regularResponses.filter(r => r.status === 200);
+    expect(regularSuccesses.length).toBeGreaterThan(0);
     
     // Should complete within reasonable time
-    expect(duration).toBeLessThan(5000); // 5 seconds
+    expect(duration).toBeLessThan(10000); // 10 seconds
   });
 });
 ```
@@ -869,22 +1130,22 @@ describe('API Gateway Performance', () => {
 ## Integration Points
 
 **The API Gateway must integrate with:**
-- **Phase 1 (Database)**: User authentication, credit management, session persistence
+- **Phase 1 (Database)**: User authentication, credit management with admin bypasses, session persistence
 - **Phase 3 (Agent Core)**: Pure agent execution with sanitized requests
-- **Phase 4 (WebSockets)**: Real-time streaming coordination
-- **Phase 5 (Dashboard)**: User interface and monitoring data
+- **Phase 4 (WebSockets)**: Real-time streaming coordination with admin privileges
+- **Phase 5 (Dashboard)**: User interface and admin analytics data
 
 ## Deliverables
 
-1. **Complete authentication system** with JWT and API key support
-2. **Credit management gateway** with real-time validation
-3. **Rate limiting service** with tier-based limits
+1. **Complete authentication system** with JWT and API key support plus admin privileges
+2. **Credit management gateway** with real-time validation, 5x markup, and admin bypass
+3. **Rate limiting service** with per-user limits and admin exemptions
 4. **Request sanitization** ensuring agent purity
-5. **WebSocket management** for real-time streaming
-6. **Audit logging system** for security and compliance
-7. **Comprehensive test suite** with security and load tests
-8. **API documentation** with examples and error codes
-9. **Monitoring and metrics** collection
-10. **Integration interfaces** for agent communication
+5. **WebSocket management** for real-time streaming with admin capabilities
+6. **Audit logging system** for security and compliance with admin activity tracking
+7. **Admin analytics endpoints** with comprehensive system insights
+8. **Comprehensive test suite** with security, admin, and load tests
+9. **API documentation** with examples, error codes, and admin endpoints
+10. **Integration interfaces** for agent communication with admin privilege propagation
 
-**Remember:** The API Gateway is the guardian of agent purity. It must handle ALL business logic while ensuring agents remain completely unaware of commercial concerns. User security, credit integrity, and system scalability all depend on this layer working flawlessly.
+**Remember:** The API Gateway is the guardian of agent purity and the enforcer of the credit system. It must handle ALL business logic including admin privileges while ensuring agents remain completely unaware of commercial concerns. User security, credit integrity with 5x markup, admin unlimited access, and system scalability all depend on this layer working flawlessly.

@@ -1,0 +1,85 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime and build
+dist/
+build/
+*.tsbuildinfo
+
+# Environment and configuration
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Testing
+coverage/
+*.lcov
+jest-results.json
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating system files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Database dumps and backups
+*.sql.backup
+*.dump
+
+# Temporary files
+tmp/
+temp/
+
+# Package manager locks (keep package-lock.json)
+yarn.lock
+pnpm-lock.yaml
+
+# Documentation generation
+docs-generated/
+
+# Test databases
+*.sqlite
+*.sqlite3
+
+# Performance monitoring
+.clinic/
+
+# Security scanning results
+security-report.json
+
+# Certificate files
+*.pem
+*.key
+*.crt
+*.cert
+
+# Application-specific
+workspaces/
+sessions/
+uploads/
