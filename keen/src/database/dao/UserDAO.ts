@@ -3,11 +3,11 @@
  * Handles authentication, admin users, and user lifecycle management
  */
 
-import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
-import { v4 as uuidv4 } from 'uuid';
-import { DatabaseManager, UserContext } from '../DatabaseManager.js';
-import { securityConfig, adminConfig } from '../../config/database.js';
+import bcrypt from "bcrypt";
+import * as jwt from "jsonwebtoken";
+import { v4 as uuidv4 } from "uuid";
+import { DatabaseManager, UserContext } from "../DatabaseManager.js";
+import { securityConfig, adminConfig } from "../../config/database.js";
 
 export interface User {
   id: string;
@@ -15,7 +15,7 @@ export interface User {
   username: string;
   password_hash: string;
   display_name?: string;
-  role: 'user' | 'admin' | 'super_admin';
+  role: "user" | "admin" | "super_admin";
   is_admin: boolean;
   admin_privileges?: {
     unlimited_credits?: boolean;
@@ -29,7 +29,7 @@ export interface User {
   };
   email_verified: boolean;
   email_verification_token?: string;
-  account_status: 'active' | 'suspended' | 'banned';
+  account_status: "active" | "suspended" | "banned";
   mfa_enabled: boolean;
   mfa_secret?: string;
   recovery_codes?: string[];
@@ -57,7 +57,7 @@ export interface LoginRequest {
 }
 
 export interface LoginResponse {
-  user: Omit<User, 'password_hash' | 'mfa_secret' | 'recovery_codes'>;
+  user: Omit<User, "password_hash" | "mfa_secret" | "recovery_codes">;
   token: string;
   refresh_token: string;
   expires_in: number;
@@ -70,10 +70,13 @@ export class UserDAO {
    * Create a new user account
    */
   async createUser(request: CreateUserRequest): Promise<User> {
-    const hashedPassword = await bcrypt.hash(request.password, securityConfig.bcryptRounds);
+    const hashedPassword = await bcrypt.hash(
+      request.password,
+      securityConfig.bcryptRounds
+    );
     const userId = uuidv4();
 
-    const [user] = await this.db.query<User>(
+    const result = await this.db.query<User>(
       `
       INSERT INTO users (
         id, email, username, password_hash, display_name, 
@@ -87,10 +90,15 @@ export class UserDAO {
         request.username,
         hashedPassword,
         request.display_name || request.username,
-        request.timezone || 'UTC',
+        request.timezone || "UTC",
         request.preferences || {},
       ]
     );
+
+    const user = result[0];
+    if (!user) {
+      throw new Error("Failed to create user");
+    }
 
     // Remove sensitive data from response
     delete (user as any).password_hash;
@@ -104,25 +112,34 @@ export class UserDAO {
    * Authenticate user login (including admin)
    */
   async login(request: LoginRequest): Promise<LoginResponse> {
-    const [user] = await this.db.query<User>(
-      'SELECT * FROM users WHERE email = $1 AND account_status = $2',
-      [request.email, 'active']
+    const result = await this.db.query<User>(
+      "SELECT * FROM users WHERE email = $1 AND account_status = $2",
+      [request.email, "active"]
     );
 
+    const user = result[0];
     if (!user) {
-      throw new Error('Invalid email or password');
+      throw new Error("Invalid email or password");
     }
 
-    const isValidPassword = await bcrypt.compare(request.password, user.password_hash);
+    const isValidPassword = await bcrypt.compare(
+      request.password,
+      user.password_hash
+    );
     if (!isValidPassword) {
-      throw new Error('Invalid email or password');
+      throw new Error("Invalid email or password");
     }
 
     // Update last login information
     await this.db.query(
-      'UPDATE users SET last_login_at = NOW(), last_login_ip = $1 WHERE id = $2',
+      "UPDATE users SET last_login_at = NOW(), last_login_ip = $1 WHERE id = $2",
       [request.ip_address, user.id]
     );
+
+    // Ensure JWT secret is available
+    if (!securityConfig.jwtSecret) {
+      throw new Error("JWT secret not configured");
+    }
 
     // Generate JWT tokens
     const tokenPayload = {
@@ -134,14 +151,21 @@ export class UserDAO {
       adminPrivileges: user.admin_privileges || {},
     };
 
-    const token = jwt.sign(tokenPayload, securityConfig.jwtSecret, {
-      expiresIn: securityConfig.jwtExpiresIn,
-    });
+    const jwtSecret = securityConfig.jwtSecret;
+    
+    // Work around TypeScript JWT typing issues by using any
+    const jwtOptions: any = {
+      expiresIn: securityConfig.jwtExpiresIn
+    };
+    const refreshOptions: any = {
+      expiresIn: securityConfig.jwtRefreshExpiresIn
+    };
 
+    const token = jwt.sign(tokenPayload, jwtSecret, jwtOptions);
     const refreshToken = jwt.sign(
-      { userId: user.id, type: 'refresh' },
-      securityConfig.jwtSecret,
-      { expiresIn: securityConfig.jwtRefreshExpiresIn }
+      { userId: user.id, type: "refresh" },
+      jwtSecret,
+      refreshOptions
     );
 
     // Store refresh token
@@ -175,11 +199,12 @@ export class UserDAO {
       return false;
     }
 
-    const [adminUser] = await this.db.query<User>(
-      'SELECT * FROM users WHERE email = $1 AND is_admin = true',
+    const result = await this.db.query<User>(
+      "SELECT * FROM users WHERE email = $1 AND is_admin = true",
       [adminConfig.email]
     );
 
+    const adminUser = result[0];
     if (!adminUser) {
       return false;
     }
@@ -192,13 +217,13 @@ export class UserDAO {
    */
   async isAdminUser(userId: string): Promise<{
     isAdmin: boolean;
-    privileges?: User['admin_privileges'];
+    privileges?: User["admin_privileges"];
   }> {
-    const [user] = await this.db.query<Pick<User, 'is_admin' | 'admin_privileges'>>(
-      'SELECT is_admin, admin_privileges FROM users WHERE id = $1',
-      [userId]
-    );
+    const result = await this.db.query<
+      Pick<User, "is_admin" | "admin_privileges">
+    >("SELECT is_admin, admin_privileges FROM users WHERE id = $1", [userId]);
 
+    const user = result[0];
     return {
       isAdmin: user?.is_admin || false,
       privileges: user?.admin_privileges || {},
@@ -208,13 +233,17 @@ export class UserDAO {
   /**
    * Get user by ID (with admin context for access control)
    */
-  async getUserById(userId: string, context?: UserContext): Promise<User | null> {
-    const [user] = await this.db.query<User>(
-      'SELECT * FROM users WHERE id = $1',
+  async getUserById(
+    userId: string,
+    context?: UserContext
+  ): Promise<User | null> {
+    const result = await this.db.query<User>(
+      "SELECT * FROM users WHERE id = $1",
       [userId],
       context
     );
 
+    const user = result[0];
     if (!user) {
       return null;
     }
@@ -232,13 +261,17 @@ export class UserDAO {
   /**
    * Get user by email
    */
-  async getUserByEmail(email: string, context?: UserContext): Promise<User | null> {
-    const [user] = await this.db.query<User>(
-      'SELECT * FROM users WHERE email = $1',
+  async getUserByEmail(
+    email: string,
+    context?: UserContext
+  ): Promise<User | null> {
+    const result = await this.db.query<User>(
+      "SELECT * FROM users WHERE email = $1",
       [email],
       context
     );
 
+    const user = result[0];
     if (!user) {
       return null;
     }
@@ -254,15 +287,31 @@ export class UserDAO {
   }
 
   /**
+   * Get user by email for authentication purposes (includes password_hash)
+   */
+  async getUserByEmailForAuth(
+    email: string,
+    context?: UserContext
+  ): Promise<User | null> {
+    const result = await this.db.query<User>(
+      "SELECT * FROM users WHERE email = $1",
+      [email],
+      context
+    );
+
+    return result[0] || null;
+  }
+
+  /**
    * Update user profile
    */
   async updateUser(
     userId: string,
-    updates: Partial<Pick<User, 'display_name' | 'timezone' | 'preferences'>>,
+    updates: Partial<Pick<User, "display_name" | "timezone" | "preferences">>,
     context?: UserContext
   ): Promise<User> {
     const setClause = [];
-    const values = [];
+    const values: any[] = [];
     let paramIndex = 1;
 
     if (updates.display_name !== undefined) {
@@ -281,22 +330,27 @@ export class UserDAO {
     }
 
     if (setClause.length === 0) {
-      throw new Error('No valid updates provided');
+      throw new Error("No valid updates provided");
     }
 
     setClause.push(`updated_at = NOW()`);
     values.push(userId);
 
-    const [user] = await this.db.query<User>(
+    const result = await this.db.query<User>(
       `
       UPDATE users 
-      SET ${setClause.join(', ')}
+      SET ${setClause.join(", ")}
       WHERE id = $${paramIndex}
       RETURNING *
       `,
       values,
       context
     );
+
+    const user = result[0];
+    if (!user) {
+      throw new Error("User not found or update failed");
+    }
 
     // Remove sensitive data unless admin
     if (!context?.isAdmin) {
@@ -316,18 +370,20 @@ export class UserDAO {
     offset: number = 0,
     context?: UserContext
   ): Promise<{
-    users: Omit<User, 'password_hash' | 'mfa_secret' | 'recovery_codes'>[];
+    users: Omit<User, "password_hash" | "mfa_secret" | "recovery_codes">[];
     total: number;
   }> {
     if (!context?.isAdmin) {
-      throw new Error('Admin privileges required to list all users');
+      throw new Error("Admin privileges required to list all users");
     }
 
-    const [{ count }] = await this.db.query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM users',
+    const countResult = await this.db.query<{ count: number }>(
+      "SELECT COUNT(*) as count FROM users",
       [],
       context
     );
+
+    const count = countResult[0]?.count || 0;
 
     const users = await this.db.query<User>(
       `
@@ -355,17 +411,17 @@ export class UserDAO {
   async deleteUser(userId: string, context?: UserContext): Promise<boolean> {
     // Allow users to delete their own account or admin to delete any account
     if (!context?.isAdmin && context?.userId !== userId) {
-      throw new Error('Insufficient privileges to delete this user account');
+      throw new Error("Insufficient privileges to delete this user account");
     }
 
     // Don't allow deletion of the main admin account
     const user = await this.getUserById(userId);
     if (user?.email === adminConfig.email) {
-      throw new Error('Cannot delete the main admin account');
+      throw new Error("Cannot delete the main admin account");
     }
 
     const result = await this.db.query(
-      'DELETE FROM users WHERE id = $1',
+      "DELETE FROM users WHERE id = $1",
       [userId],
       context
     );
@@ -377,7 +433,7 @@ export class UserDAO {
    * Hash a token for secure storage
    */
   private hashToken(token: string): string {
-    return require('crypto').createHash('sha256').update(token).digest('hex');
+    return require("crypto").createHash("sha256").update(token).digest("hex");
   }
 
   /**
@@ -385,8 +441,12 @@ export class UserDAO {
    */
   async verifyToken(token: string): Promise<UserContext | null> {
     try {
+      if (!securityConfig.jwtSecret) {
+        throw new Error("JWT secret not configured");
+      }
+
       const decoded = jwt.verify(token, securityConfig.jwtSecret) as any;
-      
+
       return {
         userId: decoded.userId,
         isAdmin: decoded.isAdmin || false,
@@ -407,26 +467,33 @@ export class UserDAO {
     context?: UserContext
   ): Promise<boolean> {
     // Verify current password
-    const [user] = await this.db.query<User>(
-      'SELECT password_hash FROM users WHERE id = $1',
+    const result = await this.db.query<User>(
+      "SELECT password_hash FROM users WHERE id = $1",
       [userId]
     );
 
+    const user = result[0];
     if (!user) {
-      throw new Error('User not found');
+      throw new Error("User not found");
     }
 
-    const isValidPassword = await bcrypt.compare(currentPassword, user.password_hash);
+    const isValidPassword = await bcrypt.compare(
+      currentPassword,
+      user.password_hash
+    );
     if (!isValidPassword) {
-      throw new Error('Current password is incorrect');
+      throw new Error("Current password is incorrect");
     }
 
     // Hash new password
-    const hashedPassword = await bcrypt.hash(newPassword, securityConfig.bcryptRounds);
+    const hashedPassword = await bcrypt.hash(
+      newPassword,
+      securityConfig.bcryptRounds
+    );
 
     // Update password
     await this.db.query(
-      'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
+      "UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2",
       [hashedPassword, userId],
       context
     );

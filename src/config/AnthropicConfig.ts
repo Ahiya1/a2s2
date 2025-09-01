@@ -40,7 +40,7 @@ export class AnthropicConfigManager {
       // NEW: Default streaming settings
       enableStreaming: true,
       streamingBufferSize: 64, // Characters to buffer before flushing
-      streamingTimeout: 3000000, // 3000 seconds
+      streamingTimeout: 300000, // 300 seconds
       showProgressIndicators: true,
       typewriterEffect: false, // Disabled by default for better UX
       typewriterDelay: 20, // ms between characters

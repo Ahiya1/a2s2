@@ -6,7 +6,8 @@
 import Decimal from 'decimal.js';
 import { DatabaseService } from '../../src/database/index.js';
 import { UserContext } from '../../src/database/DatabaseManager.js';
-import { testConfig } from '../../src/config/database.js';
+import { testConfig, adminConfig } from '../../src/config/database.js';
+import { generateTestEmail, generateTestSessionId } from '../setup.js';
 
 // Use test database
 process.env.DB_NAME = testConfig.database;
@@ -16,40 +17,65 @@ process.env.DB_PASSWORD = testConfig.password;
 describe('Database Performance Tests', () => {
   let dbService: DatabaseService;
   let testUsers: { id: string; context: UserContext }[] = [];
+  let adminContext: UserContext;
 
   beforeAll(async () => {
     dbService = new DatabaseService();
     
-    try {
-      await dbService.initialize();
-    } catch (error) {
-      console.warn('Database may already be initialized');
+    // Just test connection, don't run full initialization
+    const connected = await dbService.testConnection();
+    if (!connected) {
+      throw new Error('Cannot connect to test database. Ensure migrations have been run.');
+    }
+
+    // Get admin context
+    const adminUser = await dbService.users.getUserByEmail(adminConfig.email);
+    if (adminUser) {
+      adminContext = {
+        userId: adminUser.id,
+        isAdmin: true,
+        adminPrivileges: adminUser.admin_privileges
+      };
     }
 
     // Create multiple test users for concurrent testing
     for (let i = 0; i < 10; i++) {
+      const userEmail = generateTestEmail(`perf${i}`);
       const user = await dbService.users.createUser({
-        email: `perf${i}@example.com`,
-        username: `perf_user${i}`,
+        email: userEmail,
+        username: `perf_user${i}_${Date.now()}`,
         password: 'password123'
       });
       
+      const userContext: UserContext = { userId: user.id, isAdmin: false };
       testUsers.push({
         id: user.id,
-        context: { userId: user.id, isAdmin: false }
+        context: userContext
       });
 
       // Create credit account with initial balance
-      await dbService.credits.createCreditAccount(user.id);
-      await dbService.credits.addCredits({
-        userId: user.id,
-        amount: new Decimal('1000.00'),
-        description: 'Performance test initial credits'
-      });
+      try {
+        await dbService.credits.createCreditAccount(user.id, userContext);
+        await dbService.credits.addCredits({
+          userId: user.id,
+          amount: new Decimal('1000.00'),
+          description: 'Performance test initial credits'
+        }, userContext);
+      } catch (error) {
+        // Account might already exist
+      }
     }
   });
 
   afterAll(async () => {
+    // Cleanup test users
+    for (const user of testUsers) {
+      try {
+        await dbService.executeRawQuery('DELETE FROM users WHERE id = $1', [user.id]);
+      } catch (error) {
+        // Ignore errors during cleanup
+      }
+    }
     await dbService.close();
   });
 
@@ -58,15 +84,16 @@ describe('Database Performance Tests', () => {
       const user = testUsers[0];
       const claudeCost = new Decimal('2.00'); // 10 credits with 5x markup
       
-      // Execute 10 concurrent credit deductions
-      const promises = Array.from({ length: 10 }, (_, i) => 
-        dbService.credits.deductCredits({
+      // Execute 10 concurrent credit deductions with unique session IDs
+      const promises = Array.from({ length: 10 }, (_, i) => {
+        const sessionId = generateTestSessionId();
+        return dbService.credits.deductCredits({
           userId: user.id,
           claudeCostUSD: claudeCost,
-          sessionId: `perf-session-${i}`,
+          sessionId: sessionId,
           description: `Concurrent operation ${i}`
-        }, user.context)
-      );
+        }, user.context);
+      });
 
       const startTime = Date.now();
       
@@ -94,15 +121,16 @@ describe('Database Performance Tests', () => {
     it('should handle concurrent session creation', async () => {
       const user = testUsers[1];
       
-      // Create 5 concurrent sessions
-      const promises = Array.from({ length: 5 }, (_, i) => 
-        dbService.sessions.createSession(user.id, {
-          sessionId: `concurrent-session-${i}`,
+      // Create 5 concurrent sessions with unique IDs
+      const promises = Array.from({ length: 5 }, (_, i) => {
+        const sessionId = generateTestSessionId();
+        return dbService.sessions.createSession(user.id, {
+          sessionId: sessionId,
           gitBranch: `branch-${i}`,
           vision: `Concurrent session ${i}`,
           workingDirectory: `/tmp/concurrent-${i}`
-        }, user.context)
-      );
+        }, user.context);
+      });
 
       const startTime = Date.now();
       const results = await Promise.all(promises);
@@ -147,8 +175,9 @@ describe('Database Performance Tests', () => {
       const user = testUsers[2];
       
       // Create some test data
+      const sessionId = generateTestSessionId();
       await dbService.sessions.createSession(user.id, {
-        sessionId: 'analytics-perf-test',
+        sessionId: sessionId,
         gitBranch: 'analytics-branch',
         vision: 'Analytics performance test',
         workingDirectory: '/tmp/analytics'
@@ -210,10 +239,6 @@ describe('Database Performance Tests', () => {
 
   describe('Memory and Resource Usage', () => {
     it('should handle large result sets efficiently', async () => {
-      if (!adminContext) {
-        throw new Error('Admin context required for this test');
-      }
-
       // Create many credit transactions for performance testing
       const user = testUsers[3];
       
@@ -250,18 +275,19 @@ describe('Database Performance Tests', () => {
   describe('Admin Bypass Performance', () => {
     it('should handle admin operations without performance penalty', async () => {
       if (!adminContext) {
-        throw new Error('Admin context required for this test');
+        throw new Error('Admin context not available');
       }
-
-      // Execute many admin bypass operations
-      const promises = Array.from({ length: 20 }, (_, i) => 
-        dbService.credits.deductCredits({
+      
+      // Execute many admin bypass operations with unique session IDs
+      const promises = Array.from({ length: 20 }, (_, i) => {
+        const sessionId = generateTestSessionId();
+        return dbService.credits.deductCredits({
           userId: adminContext.userId,
           claudeCostUSD: new Decimal('10.00'),
-          sessionId: `admin-perf-${i}`,
+          sessionId: sessionId,
           description: `Admin performance test ${i}`
-        }, adminContext)
-      );
+        }, adminContext);
+      });
 
       const startTime = Date.now();
       const results = await Promise.all(promises);

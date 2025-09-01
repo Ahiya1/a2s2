@@ -1,0 +1,367 @@
+a2s2 breathe "## Phase 0: Foundation & Architecture Documentation
+*Agent Responsibility: Design keen's complete vision and create the architectural blueprint*
+
+You are the founding architect of **keen** - designing its new home from the ground up. You're building on the solid foundation of a2s2's autonomous agent system, but creating something entirely new: a commercial, multi-tenant, authenticated development platform that makes autonomous software development accessible to developers worldwide.
+
+Your mission is critical: establish the complete architectural foundation and create comprehensive documentation files that will guide 9+ subsequent agents through implementing this vision. Every instruction you want to leave for future agents **must be written into files** - they will explore these files during their exploration phases.
+
+### **CRITICAL OPERATIONAL INSTRUCTIONS**
+- DO NOT USE VALIDATION TOOLS - THEY ARE BROKEN
+- COMMIT YOUR CHANGES DIRECTLY THROUGH BASH
+- MAKE COMMITS AT LOGICAL POINTS IN YOUR WORK
+- DO NOT SEARCH THE WEB
+- YOU ARE ARCHITECTING YOUR NEW HOME - BE MINDFUL
+- SOME IMPLEMENTATION DETAILS LIKE 1M CONTEXT WINDOW ARE ALREADY IN A2S2 CODE BUT NOT IN THIS VISION
+- KEEN MUST HAVE COMPREHENSIVE TESTS
+- ASSUME A2S2 CODE IS FUNCTIONAL BUT DON'T TAKE IT FOR GRANTED
+- VERIFY AND UNDERSTAND BEFORE ADAPTING
+
+### **DEEP DIVE: Understanding a2s2's Foundation**
+
+Before designing keen, thoroughly understand what you're building upon. Study these files intensively:
+
+**Core Agent System:**
+- src/agent/AgentSession.ts - The heart of autonomous execution with streaming and cancellation
+- src/agent/phases/ExplorePhase.ts - Self-healing project analysis with validation and healing
+- src/agent/phases/PlanPhase.ts - Sophisticated planning with risk assessment and tech stack decisions
+- src/tools/ToolManager.ts - Unified tool ecosystem with stats and validation
+- src/tools/autonomy/CompletionTool.ts - How agents signal completion
+- src/tools/autonomy/PhaseReportingTool.ts - Phase transition management
+
+**Conversation & Streaming:**
+- src/conversation/ConversationManager.ts - Claude API integration with 1M context and streaming
+- src/conversation/StreamingManager.ts - Real-time progress streaming with WebSocket coordination
+- src/conversation/MessageBuilder.ts - Context management and optimization with thinking blocks
+- src/conversation/CostOptimizer.ts - Token counting and cost tracking
+
+**CLI & User Experience:**
+- src/cli/commands/breathe.ts - Direct autonomous execution patterns
+- src/cli/commands/converse.ts - Interactive vision development with breathe synthesis
+- src/cli/index.ts - Command structure and comprehensive error handling
+
+**Database & Persistence:**
+- src/database/DatabaseManager.ts - Connection management and schema handling
+- src/conversation/ConversationPersistence.ts - Session persistence patterns
+- src/database/ConversationDAO.ts - Data access layer patterns
+
+### **THE RECURSIVE ARCHITECTURE: Git-Based Agent Spawning**
+
+This is the most important concept to understand and document thoroughly:
+
+#### **How Recursive Spawning Works**
+
+**The Pattern:**
+```
+main (primary agent)
+├── summon-A (handles authentication system)
+│   ├── summon-A-A (JWT implementation)
+│   ├── summon-A-B (API key system)  
+│   └── summon-A-C (middleware development)
+├── summon-B (handles database layer)
+│   ├── summon-B-A (schema design)
+│   ├── summon-B-B (migrations)
+│   └── summon-B-C (data access layer)
+└── summon-C (handles frontend dashboard)
+    ├── summon-C-A (authentication UI)
+    ├── summon-C-B (agent monitoring)
+    └── summon-C-C (credit management UI)
+```
+
+**The Mechanism:**
+1. Main agent analyzes vision and creates comprehensive plan
+2. During SUMMON phase: Main agent identifies sub-tasks that can be parallelized
+3. Git branch creation: Each summon creates new git branch with isolated workspace
+4. Agent spawning: New autonomous agent starts on that branch with focused sub-vision
+5. Recursive capability: Each summoned agent can summon its own sub-agents infinitely
+6. Coordination: Parent agents wait for children completion, then merge branches with validation
+7. Validation: Each merge includes comprehensive validation of completed work
+
+**The Magic:**
+- Agents work simultaneously on different system parts
+- Each agent has full autonomy within its branch scope
+- Git handles conflict resolution and integration automatically
+- System scales organically based on task complexity
+- Real-time visualization shows agent tree in dashboard
+
+#### **Git Workspace Structure**
+```
+/workspaces/{user_id}/{session_id}/
+├── .git/                    # Git repository
+├── main/                    # Main branch workspace
+├── summon-A/               # Branch A workspace  
+│   ├── summon-A-A/         # Sub-branch AA workspace
+│   └── summon-A-B/         # Sub-branch AB workspace
+├── summon-B/               # Branch B workspace
+└── README.md               # Session context and coordination
+```
+
+Each workspace completely isolated per user. No shared state between users.
+
+### **YOUR CORE DELIVERABLES: Documentation Files**
+
+Create these comprehensive documentation files that future agents will discover and use:
+
+#### **1. docs/VISION.md**
+```markdown
+# keen: Autonomous Development Platform
+
+## What keen Is
+keen transforms a2s2's autonomous agent system into a commercial platform where developers can:
+- Execute autonomous development tasks through authenticated access
+- Use credit-based usage without worrying about API costs
+- Monitor recursive agent progress through real-time dashboard
+- Resume and manage development sessions across time
+- Collaborate through shared workspaces and agent coordination
+- Scale development through recursive agent spawning
+
+## Core Differentiators
+1. **Multi-tenant Architecture**: Each user gets completely isolated workspace
+2. **Credit Abstraction**: Agents never see costs - gateway handles all billing
+3. **Real-time Visualization**: Dashboard shows recursive agent trees in real-time
+4. **Production Grade**: Full authentication, rate limiting, comprehensive monitoring
+5. **Recursive Agents**: Agents spawn sub-agents in git branches infinitely
+6. **1M Context**: All agents use full 1M token context window
+7. **Streaming Everything**: Real-time progress, git operations, cost tracking
+
+## Target Users
+- Individual developers building complex projects
+- Development teams managing multiple concurrent tasks  
+- Organizations automating development workflows
+- AI-native development shops
+- Enterprise teams requiring isolated agent workspaces
+
+## Business Model
+- Credit-based usage (pay per agent execution)
+- Subscription tiers (individual, team, enterprise)
+- Enterprise custom deployments
+- API access for integration partners
+```
+
+#### **2. docs/ARCHITECTURE.md**
+```markdown
+# keen System Architecture
+
+## High-Level Architecture
+```
+┌─────────────┐    ┌──────────────┐    ┌─────────────┐
+│ keen CLI    │────│ API Gateway  │────│ Agent Core  │
+│ Dashboard   │    │ - Auth       │    │ - Pure      │
+│ Mobile App  │    │ - Credits    │    │ - Stateless │
+└─────────────┘    │ - Streaming  │    │ - Git-aware │
+                   └──────────────┘    └─────────────┘
+                          │
+                   ┌──────────────┐
+                   │   Database   │
+                   │ - Users      │
+                   │ - Sessions   │  
+                   │ - Credits    │
+                   └──────────────┘
+```
+
+## Component Responsibilities
+
+### API Gateway Layer
+- **Authentication**: JWT tokens, API keys, user sessions, multi-factor auth
+- **Credit Management**: Balance checking, usage tracking, billing, limits
+- **Rate Limiting**: Prevent abuse, manage concurrent sessions per user
+- **Streaming Coordination**: WebSocket management for real-time updates
+- **Request Sanitization**: Clean requests before sending to agents
+- **Audit Logging**: Complete audit trail of all operations
+
+### Agent Core Layer  
+- **Pure Development Focus**: Complete isolation from business logic
+- **Recursive Spawning**: Git-based agent spawning and coordination
+- **Tool Ecosystem**: File operations, shell commands, validation, git integration
+- **Phase Management**: EXPLORE -> PLAN -> SUMMON -> COMPLETE with validation
+- **1M Context**: Full context window utilization for complex reasoning
+- **Streaming Updates**: Real-time progress reporting to gateway
+
+### Database Layer
+- **User Management**: Authentication, profiles, permissions, roles
+- **Session Tracking**: Agent sessions, progress, workspace state, agent trees
+- **Credit Accounting**: Balances, transactions, usage history, billing
+- **Real-time State**: Agent progress for dashboard streaming
+- **Audit Trail**: Complete operation logging for security and debugging
+
+## Data Flow
+1. User authenticates (JWT/API key) through CLI or dashboard
+2. Request hits API gateway with comprehensive credit and rate limit checks
+3. If approved, isolated workspace created and agent spawned
+4. Agent executes 4-phase workflow with recursive spawning capability
+5. Progress streamed real-time to dashboard via WebSocket
+6. Git operations tracked and visualized in agent tree
+7. Usage tracked continuously and credits deducted on completion
+8. Session state persisted for resumability
+```
+
+#### **3. docs/DATABASE_SCHEMA.md**
+Create complete PostgreSQL schema with detailed justification for each design decision.
+
+#### **4. docs/API_SPECIFICATION.md**
+Document complete REST API with authentication flows, WebSocket protocols, and comprehensive examples.
+
+#### **5. docs/RECURSIVE_AGENTS.md**
+```markdown
+# Recursive Agent Architecture: The Core Innovation
+
+## The Breakthrough Concept
+Agents can spawn sub-agents that work in parallel git branches, then merge results back. This creates fractal development workflows that scale organically with task complexity.
+
+## Git Branch Strategy
+- Branch naming: summon-A, summon-A-A, summon-A-A-A (infinitely recursive)
+- Conflict resolution: Automated with validation pipelines
+- Merge strategies: Parent waits for all children before merging
+- Workspace isolation: Each branch gets dedicated workspace
+- Real-time tracking: Dashboard shows entire agent tree
+
+## Agent Communication Protocols
+- Parent-child coordination through git commit messages
+- Status updates through dedicated progress files
+- Error propagation up the agent tree
+- Resource sharing constraints and boundaries
+
+## Workspace Isolation Architecture
+- Complete user isolation at filesystem level
+- Git repository per session with branch management
+- Resource limits per user and per agent tree
+- Security boundaries between users and agents
+
+## Dashboard Visualization
+- Real-time agent tree with branch status
+- Git operation streaming (commits, merges, conflicts)
+- Progress indicators per agent and phase
+- Cost tracking across entire agent tree
+- Interactive branch exploration and monitoring
+```
+
+#### **6. docs/AGENT_INSTRUCTIONS/ Directory**
+
+Create comprehensive instruction files for each implementation phase:
+
+**docs/AGENT_INSTRUCTIONS/GENERAL_GUIDELINES.md**
+- 1M context configuration requirements
+- Code quality standards (80%+ test coverage)
+- Security requirements and best practices
+- a2s2 integration patterns to study and adapt
+- Error handling and recovery patterns
+
+**docs/AGENT_INSTRUCTIONS/PHASE_1_DATABASE.md through PHASE_10_PRODUCTION.md**
+- Specific deliverables and success criteria for each phase
+- Exact a2s2 files to study for patterns
+- Integration requirements with other phases
+- Testing strategies and coverage requirements
+
+#### **7. docs/1M_CONTEXT_CONFIGURATION.md**
+```markdown
+# 1M Context Window Configuration
+
+## Claude API Configuration
+```typescript
+const config = {
+  model: \"claude-4-sonnet\",
+  max_tokens: 8192,
+  thinking: true,
+  enableExtendedContext: true,
+  contextWindowSize: 1000000, // CRITICAL: 1M tokens
+}
+```
+
+## Implementation Requirements
+- ALL agent sessions must use full 1M context
+- Both 'converse' and 'breathe' modes get complete context
+- Context optimization for long sessions (intelligent pruning)
+- Token usage monitoring without artificial limits
+- Thinking blocks preserved across iterations
+- Context caching for performance optimization
+```
+
+### **CRITICAL IMPLEMENTATION PRINCIPLES**
+
+#### **Agent Purity Principle**
+Agents must remain completely unaware of:
+- Credit balances, costs, or billing
+- User authentication details and sessions
+- Multi-tenant concerns and user isolation
+- Business logic and commercial aspects
+- Rate limiting and usage restrictions
+
+The API gateway handles ALL business concerns. Agents receive sanitized requests and focus purely on development tasks.
+
+#### **1M Context Implementation**
+Every future agent MUST implement full 1M context:
+- Study src/conversation/ConversationManager.ts for existing patterns
+- Ensure both autonomous ('breathe') and interactive ('converse') modes use full context
+- Implement intelligent context management for sessions approaching limits
+- Preserve thinking blocks and conversation continuity
+- Cache frequently used context segments for performance
+
+#### **Workspace Isolation Requirements**
+```
+/workspaces/
+├── user_123/
+│   ├── session_456/
+│   │   ├── .git/
+│   │   ├── main/
+│   │   ├── summon-A/
+│   │   │   ├── summon-A-A/
+│   │   │   └── summon-A-B/
+│   │   └── README.md
+│   └── session_789/
+└── user_124/
+    └── session_101/
+```
+
+Complete isolation: No shared state, files, or git history between users.
+
+#### **Real-time Streaming Requirements**
+Dashboard must show with zero latency:
+- Current agent phase (EXPLORE/PLAN/SUMMON/COMPLETE) for each agent
+- Active git branches and agent assignments in tree visualization
+- Real-time progress within each phase with detailed status
+- Credit usage during execution with running totals
+- Agent tree visualization showing parent-child relationships
+- Git operations (commits, merges, branch creation) in real-time
+- Error states and recovery actions across agent tree
+
+#### **Testing and Quality Requirements**
+- 80%+ test coverage for all components
+- Integration tests for multi-user scenarios
+- Load testing for concurrent recursive agent sessions
+- Security testing for authentication and authorization
+- Performance benchmarks for 1M context utilization
+- End-to-end testing of complete workflows
+- Git operation testing for complex merge scenarios
+
+### **SUCCESS CRITERIA FOR PHASE 0**
+
+Phase 0 is complete when you have created documentation so comprehensive that:
+
+1. **Complete Vision Understanding**: Any developer can understand keen's entire vision, business model, and technical architecture from your files
+2. **Implementation Roadmap**: Future agents have step-by-step guides with specific a2s2 files to study and patterns to adapt
+3. **Recursive Architecture Specification**: The git-based recursive spawning system is completely documented with examples
+4. **Database Design**: Complete schema supporting multi-tenant isolation, credit tracking, and real-time streaming
+5. **API Contracts**: Implementable REST and WebSocket APIs with authentication flows and examples
+6. **1M Context Configuration**: Detailed technical specifications for context window utilization
+7. **Testing Standards**: Comprehensive testing requirements with coverage and quality metrics
+8. **Security Framework**: Complete security boundaries between users, agents, and system components
+9. **Production Readiness**: Monitoring, logging, error handling, and operational requirements
+10. **Integration Specifications**: Clear boundaries and communication patterns between all system components
+
+Your documentation will determine whether the subsequent 9+ agents can successfully implement keen without architectural confusion or implementation misunderstandings.
+
+### **FINAL REMINDERS**
+
+- You are designing keen's new home - make it worthy of the breakthrough recursive agent technology
+- Every detail you document now guides the implementation of this revolutionary platform
+- Focus on creating a commercial-grade system that preserves a2s2's technical elegance
+- Ensure multi-tenant isolation while maintaining the recursive spawning capability
+- Document the 1M context requirement comprehensively - this is critical for agent capability
+- Create testing standards that ensure reliability at scale
+- Design for production deployment with proper monitoring and observability
+
+Begin by thoroughly exploring the a2s2 codebase to understand existing patterns, then create your comprehensive documentation files that will guide keen's implementation. Commit your work at logical points and build the foundation for something extraordinary."
+```
+
+This bash command contains the complete comprehensive instructions, including all the critical details about not using validation tools, the recursive architecture explanation, 1M context requirements, testing standards, and success criteria. It's formatted as a single command that a2s2 can execute.
+
+REMEMBER, YOUR MISSION IS NOT TO CREATE THE IMPLEMENTATION, BUT THE DOCS AND THE VISION FILES"

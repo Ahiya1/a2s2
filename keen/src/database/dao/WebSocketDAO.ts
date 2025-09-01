@@ -100,7 +100,8 @@ export class WebSocketDAO {
       `
       UPDATE websocket_connections 
       SET last_ping_at = NOW(), updated_at = NOW()
-      WHERE connection_id = $1
+      WHERE connection_id = $1 AND connection_status = 'active'
+      RETURNING id
       `,
       [connectionId],
       context
@@ -122,7 +123,8 @@ export class WebSocketDAO {
       SET connection_status = 'closed', 
           disconnected_at = NOW(),
           updated_at = NOW()
-      WHERE connection_id = $1
+      WHERE connection_id = $1 AND connection_status IN ('active', 'inactive')
+      RETURNING id
       `,
       [connectionId],
       context
@@ -209,7 +211,8 @@ export class WebSocketDAO {
       SET subscribed_events = $1,
           session_filters = $2,
           updated_at = NOW()
-      WHERE connection_id = $3
+      WHERE connection_id = $3 AND connection_status = 'active'
+      RETURNING id
       `,
       [subscribedEvents, sessionFilters, connectionId],
       context
@@ -306,16 +309,23 @@ export class WebSocketDAO {
       throw new Error('Admin privileges required for connection cleanup');
     }
 
+    // Validate and sanitize the input parameter
+    const validThreshold = Number(inactiveThresholdMinutes);
+    if (!Number.isInteger(validThreshold) || validThreshold < 1 || validThreshold > 1440) {
+      throw new Error('Invalid threshold: must be a positive integer between 1 and 1440 minutes');
+    }
+
     const result = await this.db.query(
       `
       UPDATE websocket_connections 
       SET connection_status = 'inactive',
           disconnected_at = NOW(),
           updated_at = NOW()
-      WHERE last_ping_at < NOW() - INTERVAL '${inactiveThresholdMinutes} minutes'
+      WHERE last_ping_at < NOW() - INTERVAL '1 minute' * $1
         AND connection_status = 'active'
+      RETURNING id
       `,
-      [],
+      [validThreshold],
       context
     );
 

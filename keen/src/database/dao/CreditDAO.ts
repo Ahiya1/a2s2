@@ -190,6 +190,12 @@ export class CreditDAO {
         );
       }
 
+      // Resolve session_id to UUID if it's not already
+      let sessionUuid: string | null = null;
+      if (request.sessionId) {
+        sessionUuid = await this.resolveSessionId(request.sessionId, transaction);
+      }
+
       const transactionId = uuidv4();
       const [creditTransaction] = await transaction.query<CreditTransaction>(
         `
@@ -208,7 +214,7 @@ export class CreditDAO {
           newBalance.toString(),
           request.claudeCostUSD.toString(),
           creditConfig.markupMultiplier,
-          request.sessionId || null,
+          sessionUuid,
           request.description,
           request.metadata || {},
         ]
@@ -232,6 +238,12 @@ export class CreditDAO {
     const account = await this.getCreditAccountInTransaction(userId, transaction);
     const transactionId = uuidv4();
     
+    // Resolve session_id to UUID if it's not already
+    let sessionUuid: string | null = null;
+    if (sessionId) {
+      sessionUuid = await this.resolveSessionId(sessionId, transaction);
+    }
+    
     const [creditTransaction] = await transaction.query<CreditTransaction>(
       `
       INSERT INTO credit_transactions (
@@ -249,7 +261,7 @@ export class CreditDAO {
         account!.current_balance.toString(), // Balance unchanged
         claudeCostUSD.toString(),
         creditConfig.markupMultiplier,
-        sessionId || null,
+        sessionUuid,
         `[ADMIN BYPASS] ${description}`,
         {
           ...metadata,
@@ -261,6 +273,24 @@ export class CreditDAO {
     );
 
     return this.transformCreditTransaction(creditTransaction);
+  }
+
+  /**
+   * Resolve session ID to UUID format
+   */
+  private async resolveSessionId(sessionId: string, transaction: DatabaseTransaction): Promise<string | null> {
+    // If it's already a UUID, return as is
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) {
+      return sessionId;
+    }
+
+    // Try to find the session UUID by session_id string
+    const sessions = await transaction.query<{ id: string }>(
+      'SELECT id FROM agent_sessions WHERE session_id = $1 LIMIT 1',
+      [sessionId]
+    );
+
+    return sessions.length > 0 ? sessions[0].id : null;
   }
 
   /**
@@ -320,11 +350,13 @@ export class CreditDAO {
     transactions: CreditTransaction[];
     total: number;
   }> {
-    const [{ count }] = await this.db.query<{ count: number }>(
+    const countResult = await this.db.query<{ count: number }>(
       'SELECT COUNT(*) as count FROM credit_transactions WHERE user_id = $1',
       [userId],
       context
     );
+    
+    const count = countResult[0]?.count || 0;
 
     const transactions = await this.db.query<CreditTransaction>(
       `
@@ -420,11 +452,11 @@ export class CreditDAO {
    * Check if user is admin (for credit account setup)
    */
   private async isAdminUser(userId: string): Promise<boolean> {
-    const [user] = await this.db.query<{ is_admin: boolean }>(
+    const result = await this.db.query<{ is_admin: boolean }>(
       'SELECT is_admin FROM users WHERE id = $1',
       [userId]
     );
-    return user?.is_admin || false;
+    return result[0]?.is_admin || false;
   }
 
   /**
@@ -434,11 +466,12 @@ export class CreditDAO {
     userId: string, 
     transaction: DatabaseTransaction
   ): Promise<CreditAccount | null> {
-    const [account] = await transaction.query<CreditAccount>(
+    const accounts = await transaction.query<CreditAccount>(
       'SELECT * FROM credit_accounts WHERE user_id = $1 FOR UPDATE',
       [userId]
     );
 
+    const account = accounts[0];
     return account ? this.transformCreditAccount(account) : null;
   }
 

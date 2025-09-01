@@ -79,7 +79,7 @@ INSERT INTO credit_accounts (
 )
 SELECT 
     u.id,
-    999999999.9999, -- High balance for display purposes
+    99999999.9999, -- High balance within numeric(12,4) limits
     0.0000,
     0.0000,
     TRUE, -- Unlimited credits flag
@@ -93,7 +93,7 @@ FROM users u
 WHERE u.email = 'ahiya.butman@gmail.com'
 ON CONFLICT (user_id) DO UPDATE SET
     unlimited_credits = TRUE,
-    current_balance = 999999999.9999,
+    current_balance = 99999999.9999,
     daily_limit = NULL,
     monthly_limit = NULL,
     account_status = 'active',
@@ -119,7 +119,7 @@ SELECT
     ca.id,
     'admin_bypass',
     0.0000, -- No actual credit change
-    999999999.9999, -- Unlimited balance
+    99999999.9999, -- Unlimited balance within limits
     NULL, -- No Claude cost for setup
     5.00, -- Standard markup
     'Admin account initialization - unlimited credits enabled',

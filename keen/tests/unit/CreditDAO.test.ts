@@ -10,8 +10,8 @@ import { creditConfig } from '../../src/config/database.js';
 
 // Mock DatabaseManager
 class MockDatabaseManager {
-  private accounts: any[] = [];
-  private transactions: any[] = [];
+  public accounts: any[] = [];  // Made public for test access
+  public transactions: any[] = [];  // Made public for test access
 
   async query<T = any>(text: string, params?: any[], context?: UserContext): Promise<T[]> {
     if (text.includes('INSERT INTO credit_accounts')) {
@@ -19,8 +19,14 @@ class MockDatabaseManager {
         id: 'account-id',
         user_id: params?.[1],
         current_balance: params?.[2],
+        lifetime_purchased: '0.0000',
+        lifetime_spent: '0.0000',
         unlimited_credits: params?.[5] || false,
-        account_status: 'active'
+        account_status: 'active',
+        daily_limit: null as Decimal | null,
+        monthly_limit: null as Decimal | null,
+        created_at: new Date(),
+        updated_at: new Date()
       };
       this.accounts.push(account);
       return [account] as T[];
@@ -38,16 +44,20 @@ class MockDatabaseManager {
     }
 
     if (text.includes('INSERT INTO credit_transactions')) {
+      // Correct parameter mapping based on actual SQL
       const transaction = {
-        id: 'transaction-id',
+        id: params?.[0] || 'transaction-id',
         user_id: params?.[1],
         account_id: params?.[2],
-        transaction_type: params?.[3],
-        amount: params?.[4],
-        balance_after: params?.[5],
-        claude_cost_usd: params?.[6],
-        markup_multiplier: params?.[7],
-        is_admin_bypass: params?.[11] || false,
+        transaction_type: text.includes("'admin_bypass'") ? 'admin_bypass' : 'usage',
+        amount: params?.[3],
+        balance_after: params?.[4],
+        claude_cost_usd: params?.[5],
+        markup_multiplier: params?.[6] || 5.0,
+        session_id: params?.[7],
+        description: params?.[8],
+        metadata: params?.[9] || {},
+        is_admin_bypass: text.includes("'admin_bypass'"),
         created_at: new Date()
       };
       this.transactions.push(transaction);
@@ -83,7 +93,7 @@ describe('CreditDAO', () => {
       
       expect(account.user_id).toBe(userId);
       expect(account.unlimited_credits).toBe(false);
-      expect(account.current_balance.toString()).toBe('0.0000');
+      expect(account.current_balance.toString()).toBe('0');
     });
 
     it('should create admin account with unlimited credits', async () => {
@@ -125,7 +135,9 @@ describe('CreditDAO', () => {
       mockDb.accounts = [{
         id: 'account-id',
         user_id: userId,
-        current_balance: '100.0000',
+        current_balance: new Decimal('100.0000'),
+        lifetime_purchased: '0.0000',
+        lifetime_spent: '0.0000',
         unlimited_credits: false
       }];
       
@@ -133,7 +145,7 @@ describe('CreditDAO', () => {
       
       expect(result.sufficient).toBe(true);
       expect(result.isAdminBypass).toBe(false);
-      expect(result.requiredCredits.toString()).toBe('50.0000'); // 10.00 * 5.0
+      expect(result.requiredCredits.toString()).toBe('50'); // 10.00 * 5.0
     });
 
     it('should detect insufficient credits for regular users', async () => {
@@ -144,7 +156,9 @@ describe('CreditDAO', () => {
       mockDb.accounts = [{
         id: 'account-id',
         user_id: userId,
-        current_balance: '50.0000', // Not enough for 100 credits
+        current_balance: new Decimal('50.0000'), // Not enough for 100 credits
+        lifetime_purchased: '0.0000',
+        lifetime_spent: '0.0000',
         unlimited_credits: false
       }];
       
@@ -152,7 +166,7 @@ describe('CreditDAO', () => {
       
       expect(result.sufficient).toBe(false);
       expect(result.isAdminBypass).toBe(false);
-      expect(result.requiredCredits.toString()).toBe('100.0000'); // 20.00 * 5.0
+      expect(result.requiredCredits.toString()).toBe('100'); // 20.00 * 5.0
     });
   });
 
@@ -169,7 +183,9 @@ describe('CreditDAO', () => {
       mockDb.accounts = [{
         id: 'admin-account-id',
         user_id: 'admin-user-id',
-        current_balance: '999999999.9999',
+        current_balance: new Decimal('999999999.9999'),
+        lifetime_purchased: '0.0000',
+        lifetime_spent: '0.0000',
         unlimited_credits: true
       }];
 
@@ -182,9 +198,9 @@ describe('CreditDAO', () => {
       const transaction = await creditDAO.deductCredits(request, context);
       
       expect(transaction.transaction_type).toBe('admin_bypass');
-      expect(transaction.amount.toString()).toBe('0.0000'); // No deduction
+      expect(transaction.amount.toString()).toBe('0'); // No deduction
       expect(transaction.is_admin_bypass).toBe(true);
-      expect(transaction.claude_cost_usd?.toString()).toBe('15.50');
+      expect(transaction.claude_cost_usd?.toString()).toBe('15.5');
       expect(transaction.description).toContain('[ADMIN BYPASS]');
     });
 
@@ -200,7 +216,9 @@ describe('CreditDAO', () => {
       mockDb.accounts = [{
         id: 'regular-account-id',
         user_id: 'regular-user-id',
-        current_balance: '100.0000',
+        current_balance: new Decimal('100.0000'),
+        lifetime_purchased: '0.0000',
+        lifetime_spent: '0.0000',
         unlimited_credits: false
       }];
 
@@ -209,11 +227,11 @@ describe('CreditDAO', () => {
       const transaction = await creditDAO.deductCredits(request, context);
       
       expect(transaction.transaction_type).toBe('usage');
-      expect(transaction.amount.toString()).toBe('-40.0000'); // 8.00 * 5.0, negative for usage
-      expect(transaction.balance_after.toString()).toBe('60.0000'); // 100 - 40
+      expect(transaction.amount.toString()).toBe('-40'); // 8.00 * 5.0, negative for usage
+      expect(transaction.balance_after.toString()).toBe('60'); // 100 - 40
       expect(transaction.is_admin_bypass).toBe(false);
-      expect(transaction.claude_cost_usd?.toString()).toBe('8.00');
-      expect(transaction.markup_multiplier.toString()).toBe('5.00');
+      expect(transaction.claude_cost_usd?.toString()).toBe('8');
+      expect(transaction.markup_multiplier.toString()).toBe('5');
     });
 
     it('should throw error for insufficient credits', async () => {
@@ -228,7 +246,9 @@ describe('CreditDAO', () => {
       mockDb.accounts = [{
         id: 'regular-account-id',
         user_id: 'regular-user-id',
-        current_balance: '100.0000', // Not enough for 125 credits
+        current_balance: new Decimal('100.0000'), // Not enough for 125 credits
+        lifetime_purchased: '0.0000',
+        lifetime_spent: '0.0000',
         unlimited_credits: false
       }];
 

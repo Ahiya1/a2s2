@@ -1,4 +1,4 @@
-# Phase 3: Agent Core Implementation
+# Phase 3: Agent Core Implementation (Enhanced, Comprehensive)
 
 ## Mission
 
@@ -6,20 +6,26 @@ Enhance a2s2's **pure agent execution system** for keen's multi-tenant environme
 
 ## Success Criteria
 
-- [ ] **Agent purity maintained** - agents remain completely unaware of business logic
+- [ ] **Agent purity maintained** – agents remain completely unaware of business logic
 - [ ] **Recursive agent spawning** with git-based workspace isolation
 - [ ] **1M context utilization** for all agents without exception
 - [ ] **Multi-tenant workspace isolation** with complete user separation
 - [ ] **Enhanced AgentSession** supporting hierarchical agent management
 - [ ] **Real-time streaming** integration with WebSocket coordination
-- [ ] **Git operation tracking** with branch management and conflict resolution
+- [ ] **Git operation tracking** with branch management **and conflict resolution** _(retained for optional parallel mode)_
+- [ ] **Sequential execution enforced** (canonical mode) → prevents merge conflicts in practice
 - [ ] **Session persistence** for resumability across time
 - [ ] **80%+ test coverage** including recursive spawning scenarios
 - [ ] **Performance optimization** for concurrent multi-user execution
 
+> **Note on Merge Conflicts:** The canonical execution model is **sequential**, so conflicts should not occur. We **retain** conflict-resolution logic for a future **parallel mode** feature flag.
+
+---
+
 ## Core Principle: Agent Purity
 
 **SACRED RULE:** Agents must never be aware of:
+
 - User identity or authentication details
 - Credit balances or billing information
 - Subscription tiers or rate limits
@@ -27,890 +33,421 @@ Enhance a2s2's **pure agent execution system** for keen's multi-tenant environme
 - Other users' existence or data
 
 **Agents only know:**
+
 - Their vision/task instructions
 - Their isolated workspace path
 - Available tools and their capabilities
 - Project context within their workspace
 - Progress tracking and phase management
 
-```typescript
+```ts
 // ❌ BAD: Agent sees business logic
 class AgentSession {
   constructor(
-    private userId: string,           // ❌ Agent shouldn't know user
-    private creditBalance: number,    // ❌ Agent shouldn't see credits
-    private subscriptionTier: string  // ❌ Agent shouldn't know billing
+    private userId: string, // ❌ Agent shouldn't know user
+    private creditBalance: number, // ❌ Agent shouldn't see credits
+    private subscriptionTier: string // ❌ Agent shouldn't know billing
   ) {}
 }
 
 // ✅ GOOD: Agent remains pure
 class AgentSession {
   constructor(
-    private vision: string,           // ✅ Task instructions
+    private vision: string, // ✅ Task instructions
     private workingDirectory: string, // ✅ Isolated workspace
-    private options: AgentOptions     // ✅ Execution configuration
+    private options: AgentOptions // ✅ Execution configuration
   ) {
     // Agent focuses purely on development tasks
   }
 }
 ```
 
-## Enhanced AgentSession Implementation
+---
 
-### Study Pattern: Understand a2s2 Foundation
+## Architecture Overview (New)
 
-**Study These Files Intensively:**
-- `src/agent/AgentSession.ts` - Core agent execution with streaming and cancellation
-- `src/agent/phases/ExplorePhase.ts` - Self-healing project analysis
-- `src/agent/phases/PlanPhase.ts` - Sophisticated planning with risk assessment
-- `src/conversation/ConversationManager.ts` - 1M context integration with streaming
-- `src/conversation/StreamingManager.ts` - Real-time progress streaming
+**Core components** (by responsibility):
 
-### KeenAgentSession Enhancement
+- **KeenAgentSession** – autonomous lifecycle driver (sequential, phase-based)
+- **WorkspaceManager** – path isolation, FS policy, child workspace creation
+- **GitManager** – repo init, branch naming, commit discipline, _optional_ conflict handling
+- **ContextManager** – 1M context window packing, inherited context sanitization
+- **ToolManager** – safe tool registry (files, shell, git, web, autonomy tools)
+- **ConversationManager** – model IO, streaming, parsing, safety rails
+- **Streaming/WebSocketManager** – progress/thinking/events to clients (Phase 4)
+- **SessionPersistence (DAO)** – resumability, event log, artifacts index
+- **CreditGatewayService (supervisor)** – preflight checks, budgets, hard kill switches (outside agent purity boundary)
 
-```typescript
-import { AgentSession as A2S2AgentSession } from '../a2s2/AgentSession';
+**Data flow (high level):**
 
-export class KeenAgentSession extends A2S2AgentSession {
-  private workspaceManager: WorkspaceManager;
-  private gitManager: GitManager;
-  private progressReporter: ProgressReporter;
-  private sessionPersistence: SessionPersistence;
-  
-  // IMPORTANT: Constructor takes NO business logic parameters
-  constructor(
-    sessionId: string,
-    options: KeenAgentSessionOptions // Only pure agent configuration
-  ) {
-    // Call parent with pure a2s2 options
-    super({
-      vision: options.vision,
-      workingDirectory: options.workingDirectory,
-      phase: options.phase || 'EXPLORE',
-      maxIterations: options.maxIterations || 50,
-      enableWebSearch: options.enableWebSearch !== false,
-      enableExtendedContext: true, // CRITICAL: Always 1M context
-      enableStreaming: options.enableStreaming !== false,
-      showProgress: options.showProgress !== false
-    });
-    
-    this.sessionId = sessionId;
-    this.workspaceManager = new WorkspaceManager(options.workingDirectory);
-    this.gitManager = new GitManager(options.workingDirectory);
-    this.progressReporter = new ProgressReporter(sessionId);
-    this.sessionPersistence = new SessionPersistence(sessionId);
-    
-    this.setupKeenEnhancements();
-  }
-  
-  private setupKeenEnhancements(): void {
-    // Enhance parent class with keen-specific features
-    this.setupRecursiveSpawning();
-    this.setupGitIntegration();
-    this.setupProgressStreaming();
-    this.setupSessionPersistence();
-  }
-  
-  async execute(options: KeenAgentSessionOptions): Promise<KeenAgentSessionResult> {
-    const startTime = Date.now();
-    
-    try {
-      // 1. Initialize isolated workspace
-      await this.workspaceManager.ensureIsolation();
-      
-      // 2. Initialize git repository for recursive spawning
-      await this.gitManager.initializeRepository();
-      
-      // 3. Start progress streaming
-      this.progressReporter.startStreaming();
-      
-      // 4. Execute core a2s2 logic (PURE)
-      const coreResult = await super.execute(options);
-      
-      // 5. Enhance result with keen-specific metadata
-      const keenResult = await this.enhanceResult(coreResult);
-      
-      // 6. Persist session state
-      await this.sessionPersistence.persistSession(keenResult);
-      
-      return keenResult;
-      
-    } catch (error) {
-      await this.handleExecutionError(error);
-      throw error;
-    } finally {
-      this.progressReporter.stopStreaming();
-    }
-  }
-  
-  // NEW: Recursive agent spawning capability
-  async spawnChildAgent(
-    subVision: string,
-    spawnConfig: AgentSpawnConfig
-  ): Promise<KeenAgentSession> {
-    // Generate child session ID
-    const childSessionId = this.generateChildSessionId(spawnConfig.purpose);
-    
-    // Create isolated git branch
-    const childBranch = await this.gitManager.createChildBranch(
-      childSessionId,
-      spawnConfig.purpose
-    );
-    
-    // Prepare child workspace
-    const childWorkspace = await this.workspaceManager.createChildWorkspace(
-      childBranch,
-      spawnConfig.inheritedContext
-    );
-    
-    // Create child agent (PURE - no business logic)
-    const childAgent = new KeenAgentSession(childSessionId, {
-      vision: subVision,
-      workingDirectory: childWorkspace.path,
-      parentSessionId: this.sessionId,
-      inheritedContext: spawnConfig.inheritedContext,
-      // Copy parent's pure configuration
-      maxIterations: spawnConfig.maxIterations || 30,
-      enableWebSearch: spawnConfig.enableWebSearch !== false,
-      enableStreaming: true,
-      resourceLimits: spawnConfig.resourceLimits
-    });
-    
-    // Track child relationship
-    this.childAgents.set(childSessionId, {
-      agent: childAgent,
-      branch: childBranch,
-      purpose: spawnConfig.purpose,
-      spawnedAt: new Date()
-    });
-    
-    // Report spawning to progress stream
-    this.progressReporter.reportAgentSpawned({
-      parentSession: this.sessionId,
-      childSession: childSessionId,
-      purpose: spawnConfig.purpose,
-      branch: childBranch
-    });
-    
-    return childAgent;
-  }
-  
-  // NEW: Wait for child completion and merge results
-  async waitForChildrenCompletion(): Promise<ChildCompletionResult[]> {
-    const childPromises = Array.from(this.childAgents.entries()).map(
-      async ([childSessionId, childInfo]): Promise<ChildCompletionResult> => {
-        try {
-          // Wait for child completion
-          const result = await childInfo.agent.execute(childInfo.agent.getOptions());
-          
-          // Attempt to merge child's work
-          const mergeResult = await this.gitManager.mergeChildBranch(
-            childInfo.branch,
-            result.completionReport
-          );
-          
-          return {
-            sessionId: childSessionId,
-            purpose: childInfo.purpose,
-            success: result.success,
-            result: result,
-            mergeResult: mergeResult
-          };
-          
-        } catch (error) {
-          return {
-            sessionId: childSessionId,
-            purpose: childInfo.purpose,
-            success: false,
-            error: error.message
-          };
+1. API call → Credit preflight (supervisor) → create **KeenAgentSession**
+2. Session builds 1M context → enters **Autonomy Loop**
+3. Tools write files / run commands → **GitManager** commits
+4. Events stream via **WebSocketManager** → persisted by DAOs
+5. On completion (or budget/iteration cap) → **report_complete** → snapshot + return
+
+---
+
+## Operating Modes (New)
+
+- **Sequential (Default, Canonical):**
+  - Child agents spawn **one-at-a-time**.
+  - Each child completes and merges before next begins.
+  - Deterministic order; **no merge conflicts** by design.
+
+- **Parallel (Feature-flagged, Future):**
+  - Multiple children run concurrently on branches.
+  - Requires advanced conflict resolution & priority merge.
+  - The existing Git conflict code remains, but is **disabled** in sequential mode.
+
+---
+
+## Autonomy Design (Expanded)
+
+Autonomy is achieved via a **phase-driven loop** with **tool-governed self-reporting**.
+
+**Key tools (contracted JSON):**
+
+- `report_phase` → `{ phase: "EXPLORE" | "PLAN" | "SUMMON" | "COMPLETE", note?: string }`
+- `continue_work` → `{ reason: string, next_phase?: Phase, hints?: any }`
+- `report_complete` → `{ summary: string, filesCreated?: string[], filesModified?: string[], success: boolean, metrics?: Record<string,number> }`
+
+**Supervisor boundaries (outside purity):**
+
+- Preflight: `CreditGatewayService.ensureAllowance(sessionBudget)`
+- Per-iteration metering: `CostOptimizer.charge(tokens)`
+- Hard-stops: budget exceeded, iteration cap, wall clock limit
+
+---
+
+## Phase Lifecycle & State Machine (New)
+
+**States:** `EXPLORE → PLAN → SUMMON → COMPLETE`
+
+**Transitions:**
+
+- `EXPLORE → PLAN` (when enough project context collected)
+- `PLAN → SUMMON` (plan approved by agent; tasks enumerated)
+- `SUMMON → EXPLORE/PLAN` (if new info or re-plan required)
+- `SUMMON → COMPLETE` (when acceptance checks pass)
+
+**Guards:**
+
+- credit budget available, iteration < max, runtime < wall-clock cap
+
+**State Table:**
+
+| State    | Entry Action                              | Tools (typical)                            | Exit Condition                       |
+| -------- | ----------------------------------------- | ------------------------------------------ | ------------------------------------ |
+| EXPLORE  | analyze tree, read key files              | `get_project_tree`, `read_files`           | map established                      |
+| PLAN     | produce spec, risks, test plan            | internal planning, `ValidationTool`        | plan acknowledged via `report_phase` |
+| SUMMON   | implement, test, (optionally spawn child) | `write_files`, `run_command`, `web_search` | tests pass or needs re-plan          |
+| COMPLETE | summarize, persist, finalize              | `report_complete`                          | terminal                             |
+
+---
+
+## Autonomy Loop – Algorithm (Pseudocode)
+
+```ts
+async function runAutonomy(session: KeenAgentSession) {
+  while (!session.done()) {
+    supervisor.preflightOrThrow(); // credits/limits (outside purity)
+
+    const phase = session.currentPhase();
+    session.stream.phase(phase);
+
+    switch (phase) {
+      case "EXPLORE":
+        await session.explore(); // tree, read_files, heuristics
+        session.tool.report_phase({ phase: "PLAN", note: "context mapped" });
+        break;
+
+      case "PLAN":
+        await session.plan(); // tasks, risks, acceptance
+        session.tool.continue_work({
+          reason: "ready to implement",
+          next_phase: "SUMMON",
+        });
+        break;
+
+      case "SUMMON":
+        // Sequential child spawn (optional)
+        if (session.needsChild()) {
+          supervisor.ensureAllowance(childBudget);
+          const child = await session.spawnChild(subVision);
+          await child.runToCompletion(); // blocks until merged
+          await session.postChildValidation();
         }
-      }
-    );
-    
-    const results = await Promise.all(childPromises);
-    
-    // Report completion summary
-    this.progressReporter.reportChildrenCompleted({
-      parentSession: this.sessionId,
-      childResults: results,
-      successfulMerges: results.filter(r => r.mergeResult?.success).length,
-      totalChildren: results.length
-    });
-    
-    return results;
+        await session.implementIncrement(); // write_files, run_command
+        if (session.acceptanceMet()) {
+          session.tool.report_phase({ phase: "COMPLETE" });
+        } else {
+          session.tool.continue_work({ reason: "more work needed" });
+        }
+        break;
+
+      case "COMPLETE":
+        const report = await session.finalize();
+        session.tool.report_complete(report);
+        return report;
+    }
+
+    supervisor.meterAndMaybeStop();
   }
 }
 ```
 
-### Workspace Isolation Manager
+---
 
-```typescript
-export class WorkspaceManager {
-  private workspacePath: string;
-  private isolationConfig: IsolationConfig;
-  
+## Sequential Spawn Protocol (New)
+
+1. **Checkpoint** current branch & workspace
+2. **Create child branch** (linear): `summon-A`, `summon-B`, ...
+3. **Create child workspace** under parent path
+4. **Run child to completion** (blocking)
+5. **Validate artifacts** (tests, lints)
+6. **Fast-forward merge** back to parent (no conflicts by design)
+7. **Commit with metadata** `[CHILD:ID][PURPOSE:...]`
+8. **Resume parent** at `SUMMON`
+
+**Branch naming (linear, deterministic):**
+
+```
+main → summon-A → summon-B → summon-C → ...
+```
+
+---
+
+## Git Strategy (Clarified)
+
+- **Repo init**: on first execution; ensure `main` exists
+- **Commit discipline**: `[AGENT:<sid>][PHASE:<phase>] message`
+- **Tracking**: `branchHierarchy` map; commit ledger per branch
+- **Conflict Handling**: **disabled by default** in sequential mode; implementation retained behind `PARALLEL_MODE` flag
+
+**Operation Table:**
+
+| Operation    | Seq Mode | Parallel Mode   |
+| ------------ | -------- | --------------- |
+| init repo    | ✓        | ✓               |
+| create child | ✓ (one)  | ✓ (many)        |
+| merge child  | FF merge | 3-way + resolve |
+| auto-resolve | —        | ✓               |
+
+---
+
+## 1M Context Management (Expanded)
+
+**Goals:** pack maximal useful context while preserving _thinking blocks_.
+
+- **Max window**: 1,000,000 tokens; use \~50k buffer
+- **Message packing**: system → instructions → inherited → project map → recent tool traces
+- **Sanitization**: inherited context scrubbed for business/tenant data
+- **Intelligent pruning**: LRU of files, semantic summarization for older traces
+- **Thinking preservation**: maintain chain-of-thought _structures_ (without leaking secrets)
+
+```ts
+const optimized = contextOptimizer.optimize({
+  maxContextSize: 1_000_000,
+  intelligentPruning: true,
+  preserveThinking: true,
+});
+```
+
+---
+
+## Persistence Schema (New)
+
+**Tables / DAOs used:**
+
+- `sessions` (SessionDAO): id, parent_id, vision, phase, started_at, ended_at, success, budget_used
+- `agent_events` (AnalyticsDAO): session_id, type, payload JSONB, ts
+- `artifacts` (SessionDAO): session_id, path, hash, size, kind
+- `ws_connections` (WebSocketDAO): session_id, client_id, status
+- `credits_ledger` (CreditDAO): session_id, tokens_in, tokens_out, cost
+
+**Indexes:** on `(session_id, ts)` for events; `(path)` for artifacts
+
+**Resumability:** on restart, load last committed phase & context; continue loop
+
+---
+
+## WebSocket Events (New)
+
+**Event names & payloads:**
+
+- `agent.started` → `{ sessionId, vision, cwd }`
+- `agent.phase` → `{ sessionId, phase, note? }`
+- `agent.progress` → `{ sessionId, message, step, total? }`
+- `agent.spawned` → `{ parentId, childId, purpose, branch }`
+- `agent.completed` → `{ sessionId, success, summary }`
+- `agent.error` → `{ sessionId, code, message, stack? }`
+
+**Backpressure:**
+
+- coalesce progress events; drop debug logs when queue > threshold
+
+---
+
+## Security & Isolation (Expanded)
+
+- **FS boundaries**: regex + `path.resolve` checks; deny `..`, `~`
+- **Permissions**: `0o700` on workspaces and child dirs
+- **Shell execution**: allowlist commands; timeouts; output size caps
+- **RLS**: DB queries scoped by `session_id` and tenant id (enforced by DAO)
+- **Audit**: `AuditLogger` captures tool usage & file diffs
+
+---
+
+## Credit Governance (New)
+
+- **Budgets**: per-session & per-child `maxTokens` / `maxCost`
+- **Preflight**: decline spawn when `remaining < childMin`
+- **Metering**: token usage reported per completion; charged to `credits_ledger`
+- **Kill switches**: hard stop on overrun; produce partial report
+- **Purity preserved**: all gating outside agent context
+
+---
+
+## Observability & Metrics (New)
+
+- **Counters**: agents_started, agents_completed, children_spawned
+- **Timers**: phase_duration_ms{phase}, end_to_end_ms
+- **Histograms**: tokens_per_iter, files_touched
+- **Gauges**: ws_clients_active, queue_depth
+- **Tracing**: OpenTelemetry spans around tool calls & model invocations
+
+---
+
+## Error Handling & Resilience (New)
+
+- **Categories**: ToolError, GitOperationError, BudgetExceeded, ValidationError
+- **Retries**: exponential backoff on transient IO; no retry on deterministic compiler errors without code change
+- **Idempotency**: commands tagged with `(sessionId, step)` to dedupe on resume
+- **Crash recovery**: reload last successful phase; re-run from checkpoint
+
+---
+
+## Performance Targets (New)
+
+- **Cold start** < 3s for empty project; < 8s for medium repo (2k files)
+- **Throughput**: 10 concurrent sessions per node with 1M context enabled
+- **FS ops**: > 95% operations within 50ms p50, < 300ms p95
+- **Streaming**: < 250ms end-to-end latency p95
+
+---
+
+## Testing Strategy (Expanded)
+
+1. **Unit**: Agent state machine, branch naming, context packing
+2. **Integration**: `full-autonomous-workflow`, `git-validation-workflow`
+3. **E2E**: CLI `breathe` on fixtures (react-todo, node-api)
+4. **Security**: path traversal, RLS enforcement
+5. **Performance**: large project (500+ files), 1M context ingest
+6. **Soak**: 2–4 hour runs with periodic child spawns
+7. **Failure Injection**: simulate tool timeouts, OOM, git lock files
+
+**Coverage Goal**: ≥ 80% lines; ≥ 90% critical paths (spawn, finalize)
+
+---
+
+## API Gateway Contracts (New)
+
+- `POST /agents/start` → `{ vision, cwd, budget }` → `{ sessionId }`
+- `POST /agents/continue` → `{ sessionId }` → `{ phase, snapshot }`
+- `GET /agents/:id/stream` → SSE/WS stream of events
+- `POST /agents/:id/kill` → stop gracefully, emit partial report
+
+All requests pass through **AuthenticationService**; payloads are sanitized before entering agent purity zone.
+
+---
+
+## Example End-to-End Flow (New)
+
+1. `/agents/start { vision: "Create auth + CRUD" }` → `sessionId: s1`
+2. `agent.started(s1)`; enters **EXPLORE** → reads tree/files
+3. `report_phase { PLAN }`; produces spec & tests skeleton
+4. `continue_work { next_phase: SUMMON }` → implement
+5. Needs JWT specialist → **spawn child** `summon-A` → run → fast-forward merge
+6. Parent validates; lints/tests → `report_phase { COMPLETE }`
+7. `report_complete { summary, filesCreated, success: true }`
+
+---
+
+## Code Skeletons (New)
+
+```ts
+// src/agent/AgentSession.ts (skeleton)
+export class AgentSession {
   constructor(
-    workspacePath: string,
-    isolationConfig?: IsolationConfig
-  ) {
-    this.workspacePath = workspacePath;
-    this.isolationConfig = isolationConfig || this.getDefaultIsolation();
+    private opts: AgentOptions,
+    private deps: Deps
+  ) {}
+  currentPhase(): Phase {
+    /* ... */
   }
-  
-  async ensureIsolation(): Promise<void> {
-    // Verify workspace is properly isolated
-    await this.validateWorkspaceIsolation();
-    
-    // Set up filesystem boundaries
-    await this.setupFilesystemBoundaries();
-    
-    // Initialize workspace structure
-    await this.initializeWorkspaceStructure();
+  async explore() {}
+  async plan() {}
+  async implementIncrement() {}
+  needsChild(): boolean {
+    /* ... */
   }
-  
-  private async validateWorkspaceIsolation(): Promise<void> {
-    // Ensure workspace is within allowed boundaries
-    const normalizedPath = path.resolve(this.workspacePath);
-    const allowedBasePattern = /^\/workspaces\/[a-f0-9-]+\/session_[a-zA-Z0-9_-]+/;
-    
-    if (!allowedBasePattern.test(normalizedPath)) {
-      throw new SecurityError(
-        `Workspace path ${normalizedPath} violates isolation boundaries`
-      );
-    }
-    
-    // Check for path traversal attempts
-    if (normalizedPath.includes('..') || normalizedPath.includes('~')) {
-      throw new SecurityError(
-        `Workspace path contains illegal traversal: ${normalizedPath}`
-      );
-    }
+  async spawnChild(vision: string) {
+    /* sequential */
   }
-  
-  private async setupFilesystemBoundaries(): Promise<void> {
-    // Create workspace directory if it doesn't exist
-    await fs.ensureDir(this.workspacePath);
-    
-    // Set restrictive permissions
-    await fs.chmod(this.workspacePath, 0o700); // Owner only
-    
-    // Create .keen directory for metadata
-    const keenMetaDir = path.join(this.workspacePath, '.keen');
-    await fs.ensureDir(keenMetaDir);
-    
-    // Initialize isolation metadata
-    await this.initializeIsolationMetadata(keenMetaDir);
+  acceptanceMet(): boolean {
+    /* tests pass, etc. */
   }
-  
-  async createChildWorkspace(
-    childBranch: string,
-    inheritedContext: any
-  ): Promise<ChildWorkspace> {
-    const childPath = path.join(this.workspacePath, childBranch);
-    
-    // Create isolated child directory
-    await fs.ensureDir(childPath);
-    await fs.chmod(childPath, 0o700);
-    
-    // Copy inherited context if any
-    if (inheritedContext) {
-      await this.copyInheritedContext(childPath, inheritedContext);
-    }
-    
-    return {
-      path: childPath,
-      branch: childBranch,
-      isolationLevel: 'child',
-      parentPath: this.workspacePath
-    };
-  }
-  
-  // Secure file operations within workspace boundaries
-  async secureFileOperation(
-    operation: 'read' | 'write' | 'delete',
-    targetPath: string,
-    content?: string
-  ): Promise<any> {
-    // Validate path is within workspace
-    const resolvedPath = path.resolve(targetPath);
-    const workspaceBase = path.resolve(this.workspacePath);
-    
-    if (!resolvedPath.startsWith(workspaceBase)) {
-      throw new SecurityError(
-        `File operation outside workspace: ${resolvedPath} not in ${workspaceBase}`
-      );
-    }
-    
-    switch (operation) {
-      case 'read':
-        return await fs.readFile(resolvedPath, 'utf8');
-      case 'write':
-        await fs.ensureDir(path.dirname(resolvedPath));
-        return await fs.writeFile(resolvedPath, content!);
-      case 'delete':
-        return await fs.remove(resolvedPath);
-      default:
-        throw new Error(`Unsupported file operation: ${operation}`);
-    }
+  async finalize() {
+    /* build CompletionReport */
   }
 }
 ```
 
-### Git Manager for Recursive Spawning
-
-```typescript
-export class GitManager {
-  private workspacePath: string;
-  private git: SimpleGit;
-  private branchHierarchy: Map<string, BranchInfo> = new Map();
-  
-  constructor(workspacePath: string) {
-    this.workspacePath = workspacePath;
-    this.git = simpleGit(workspacePath);
-  }
-  
-  async initializeRepository(): Promise<void> {
-    try {
-      // Check if already a git repository
-      await this.git.status();
-    } catch (error) {
-      // Initialize new repository
-      await this.git.init();
-      
-      // Create initial commit
-      await this.createInitialCommit();
-    }
-    
-    // Ensure we're on main branch
-    await this.git.checkout(['main']);
-  }
-  
-  async createChildBranch(
-    childSessionId: string,
-    purpose: string
-  ): Promise<string> {
-    // Generate branch name based on session hierarchy
-    const branchName = this.generateBranchName(childSessionId);
-    
-    // Create and checkout new branch
-    await this.git.checkoutLocalBranch(branchName);
-    
-    // Record branch information
-    this.branchHierarchy.set(branchName, {
-      sessionId: childSessionId,
-      purpose,
-      createdAt: new Date(),
-      parentBranch: await this.getCurrentBranch(),
-      commits: []
-    });
-    
-    // Create initial branch commit
-    await this.createBranchCommit(
-      branchName,
-      `[AGENT:${childSessionId}] Initialize branch for ${purpose}`
-    );
-    
-    return branchName;
-  }
-  
-  async commitProgress(
-    sessionId: string,
-    phase: string,
-    message: string,
-    files?: string[]
-  ): Promise<string> {
-    const currentBranch = await this.getCurrentBranch();
-    
-    // Stage files if provided, otherwise stage all changes
-    if (files && files.length > 0) {
-      await this.git.add(files);
-    } else {
-      await this.git.add('.');
-    }
-    
-    // Create commit with agent metadata
-    const commitMessage = `[AGENT:${sessionId}] [PHASE:${phase}] ${message}`;
-    const commitResult = await this.git.commit(commitMessage);
-    
-    // Track commit in branch hierarchy
-    const branchInfo = this.branchHierarchy.get(currentBranch);
-    if (branchInfo) {
-      branchInfo.commits.push({
-        hash: commitResult.commit,
-        message: commitMessage,
-        timestamp: new Date(),
-        phase
-      });
-    }
-    
-    return commitResult.commit;
-  }
-  
-  async mergeChildBranch(
-    childBranch: string,
-    completionReport: any
-  ): Promise<MergeResult> {
-    try {
-      // Switch to parent branch
-      const branchInfo = this.branchHierarchy.get(childBranch);
-      if (!branchInfo) {
-        throw new Error(`Branch info not found: ${childBranch}`);
-      }
-      
-      await this.git.checkout(branchInfo.parentBranch || 'main');
-      
-      // Attempt merge
-      const mergeResult = await this.git.merge([childBranch, '--no-ff']);
-      
-      // Create merge commit with completion info
-      await this.git.commit(
-        `[MERGE] ${childBranch} - ${completionReport.summary}\n\n` +
-        `Files created: ${completionReport.filesCreated?.length || 0}\n` +
-        `Files modified: ${completionReport.filesModified?.length || 0}\n` +
-        `Success: ${completionReport.success}`
-      );
-      
-      return {
-        success: true,
-        mergeCommit: mergeResult.commit,
-        conflictsResolved: 0,
-        summary: `Successfully merged ${childBranch}`
-      };
-      
-    } catch (error) {
-      // Handle merge conflicts
-      if (error.message.includes('CONFLICTS')) {
-        const conflictResolution = await this.handleMergeConflicts(
-          childBranch,
-          error
-        );
-        return conflictResolution;
-      }
-      
-      throw new GitOperationError(
-        `Failed to merge ${childBranch}: ${error.message}`
-      );
-    }
-  }
-  
-  private async handleMergeConflicts(
-    childBranch: string,
-    conflictError: any
-  ): Promise<MergeResult> {
-    // Get list of conflicted files
-    const status = await this.git.status();
-    const conflictedFiles = status.conflicted;
-    
-    if (conflictedFiles.length === 0) {
-      throw new Error('No conflicts found but merge failed');
-    }
-    
-    // Attempt automatic conflict resolution
-    let resolvedCount = 0;
-    const unresolvedFiles: string[] = [];
-    
-    for (const file of conflictedFiles) {
-      const resolved = await this.attemptAutoResolve(file);
-      if (resolved) {
-        resolvedCount++;
-        await this.git.add(file);
-      } else {
-        unresolvedFiles.push(file);
-      }
-    }
-    
-    if (unresolvedFiles.length > 0) {
-      // Abort merge if we can't resolve all conflicts
-      await this.git.merge(['--abort']);
-      
-      return {
-        success: false,
-        error: `Unresolved conflicts in: ${unresolvedFiles.join(', ')}`,
-        conflictsResolved: resolvedCount,
-        unresolvedConflicts: unresolvedFiles
-      };
-    }
-    
-    // Complete merge with resolved conflicts
-    const mergeCommit = await this.git.commit(
-      `[MERGE] ${childBranch} - conflicts resolved automatically (${resolvedCount} files)`
-    );
-    
-    return {
-      success: true,
-      mergeCommit: mergeCommit.commit,
-      conflictsResolved: resolvedCount,
-      summary: `Merged ${childBranch} with ${resolvedCount} conflicts resolved`
-    };
-  }
+```ts
+// Branch naming (linear)
+function nextChildName(prev?: string): string {
+  if (!prev) return "summon-A";
+  const last = prev.split("-")[1];
+  const code = last.charCodeAt(0) + 1;
+  return `summon-${String.fromCharCode(code)}`;
 }
 ```
 
-### Enhanced Context Management
+---
 
-**Study Pattern:** `src/conversation/MessageBuilder.ts` - Context management with thinking blocks
+## CLI Touchpoints (New)
 
-```typescript
-export class KeenContextManager {
-  private contextOptimizer: ContextOptimizer;
-  private thinkingBlockManager: ThinkingBlockManager;
-  
-  constructor() {
-    // CRITICAL: Always enforce 1M context
-    this.contextOptimizer = new ContextOptimizer({
-      maxContextSize: 1000000,  // 1M tokens - NON-NEGOTIABLE
-      enableExtendedContext: true,
-      intelligentPruning: true,
-      preserveThinking: true
-    });
-    
-    this.thinkingBlockManager = new ThinkingBlockManager();
-  }
-  
-  async prepareAgentContext(
-    vision: string,
-    workspaceAnalysis: any,
-    inheritedContext?: any
-  ): Promise<ConversationMessage[]> {
-    // Build comprehensive context for agent
-    const contextBuilder = new ContextBuilder();
-    
-    // 1. System prompt with agent instructions
-    contextBuilder.addSystemPrompt(
-      this.buildKeenSystemPrompt(vision, workspaceAnalysis)
-    );
-    
-    // 2. Inherited context from parent agent (if any)
-    if (inheritedContext) {
-      contextBuilder.addInheritedContext(
-        this.sanitizeInheritedContext(inheritedContext)
-      );
-    }
-    
-    // 3. Workspace analysis and project context
-    contextBuilder.addProjectContext(workspaceAnalysis);
-    
-    // 4. Available tools and capabilities
-    contextBuilder.addToolContext(this.getAvailableTools());
-    
-    // Build final context
-    const context = contextBuilder.build();
-    
-    // Optimize for 1M context window
-    const optimizedContext = await this.contextOptimizer.optimize(context);
-    
-    // Validate context size
-    this.validateContextSize(optimizedContext);
-    
-    return optimizedContext;
-  }
-  
-  private buildKeenSystemPrompt(
-    vision: string,
-    workspaceAnalysis: any
-  ): string {
-    return `You are an autonomous software development agent within keen's platform.
+- `keen breathe "<vision>"` \ `keen breathe -f vision.md`\ af – kicks off session
+- `keen status <sessionId>` – shows phase, last commit, budget used
+- `keen continue <sessionId>` – resume after pause/kill
 
-TASK: ${vision}
-WORKSPACE: ${workspaceAnalysis.workingDirectory}
-CURRENT PHASE: EXPLORE
+---
 
-AUTONOMOUS OPERATION PROTOCOL:
-1. You drive this conversation completely - no external prompts
-2. Continue working until the task is fully completed
-3. Use tools to understand your environment and implement solutions
-4. Signal completion using the report_complete tool
-5. You can spawn sub-agents using the summon capability for parallel work
+## Migration from a2s2 (Plan)
 
-RECURSIVE AGENT CAPABILITY:
-- You can spawn child agents during the SUMMON phase
-- Each child agent gets its own git branch and workspace
-- Child agents work in parallel on focused sub-tasks
-- You coordinate child completion and merge their work
-- Recursive spawning enables unlimited decomposition
+1. **Extract** autonomy tools (report/continue/complete) and ConversationManager
+2. **Refactor** to enforce sequential spawn; gate behind feature flag for parallel mode
+3. **Integrate** DAOs for persistence and credits
+4. **Wire** WebSocketManager for streaming
+5. **Harden** with expanded tests & failure injection
 
-THREE-PHASE LIFECYCLE:
-- EXPLORE: Understand project state and requirements
-  • Use get_project_tree to analyze structure
-  • Use read_files to examine key files  
-  • Plan your approach and identify sub-tasks
+---
 
-- SUMMON: Create specialist agents for complex tasks
-  • Identify tasks suitable for parallel execution
-  • Spawn child agents with focused sub-visions
-  • Monitor child progress and coordinate completion
-
-- COMPLETE: Implement, test, and finalize the solution
-  • Use write_files to implement changes
-  • Use run_command to test your work
-  • Validate requirements are met
-  • Call report_complete when finished
-
-1M CONTEXT WINDOW:
-You have access to the full 1,000,000 token context window. Use this for:
-- Comprehensive project analysis
-- Complex reasoning and planning
-- Maintaining context across recursive spawning
-- Deep understanding of large codebases
-
-AVAILABLE TOOLS:
-${this.formatToolDescriptions()}
-
-BEGIN AUTONOMOUS EXECUTION:
-Start by exploring the project structure and understanding your task.`;
-  }
-  
-  private validateContextSize(context: ConversationMessage[]): void {
-    const tokenCount = this.estimateTokenCount(context);
-    
-    if (tokenCount > 950000) { // Leave 50k buffer
-      Logger.warn('Context approaching 1M limit', {
-        tokenCount,
-        contextMessages: context.length
-      });
-    }
-    
-    if (tokenCount > 1000000) {
-      throw new Error(
-        `Context exceeds 1M token limit: ${tokenCount} tokens. ` +
-        'This violates keen\'s architecture requirements.'
-      );
-    }
-  }
-}
-```
-
-## Testing Requirements
-
-### Recursive Spawning Tests
-
-```typescript
-describe('Recursive Agent Spawning', () => {
-  let parentAgent: KeenAgentSession;
-  let workspace: string;
-  
-  beforeEach(async () => {
-    workspace = await createIsolatedTestWorkspace();
-    parentAgent = new KeenAgentSession('test_main_session', {
-      vision: 'Create a complex application with authentication and database',
-      workingDirectory: workspace
-    });
-  });
-  
-  test('spawns child agents with isolated git branches', async () => {
-    // Parent agent spawns child for authentication
-    const authAgent = await parentAgent.spawnChildAgent(
-      'Implement JWT authentication system',
-      {
-        purpose: 'authentication',
-        maxIterations: 20,
-        resourceLimits: { maxCost: 5.0 }
-      }
-    );
-    
-    // Verify child has isolated branch
-    const gitManager = new GitManager(workspace);
-    const branches = await gitManager.listBranches();
-    
-    expect(branches).toContain('summon-A'); // First child branch
-    expect(authAgent.getWorkingDirectory()).toMatch(/summon-A/);
-    
-    // Child should be able to spawn its own children
-    const jwtAgent = await authAgent.spawnChildAgent(
-      'Implement JWT token generation',
-      { purpose: 'jwt-tokens' }
-    );
-    
-    const childBranches = await gitManager.listBranches();
-    expect(childBranches).toContain('summon-A-A'); // Grandchild branch
-  });
-  
-  test('maintains agent purity in recursive spawning', async () => {
-    const mockSpawnFunction = jest.spyOn(parentAgent, 'spawnChildAgent');
-    
-    await parentAgent.spawnChildAgent(
-      'Handle database operations',
-      { purpose: 'database' }
-    );
-    
-    const spawnCall = mockSpawnFunction.mock.calls[0];
-    const [subVision, spawnConfig] = spawnCall;
-    
-    // Verify child receives only pure configuration
-    expect(spawnConfig).not.toHaveProperty('userId');
-    expect(spawnConfig).not.toHaveProperty('creditBalance');
-    expect(spawnConfig).not.toHaveProperty('subscriptionTier');
-    expect(spawnConfig).toHaveProperty('purpose');
-    expect(spawnConfig).toHaveProperty('resourceLimits');
-  });
-  
-  test('merges child work with conflict resolution', async () => {
-    // Create two children that might have conflicts
-    const child1 = await parentAgent.spawnChildAgent(
-      'Create user authentication',
-      { purpose: 'auth' }
-    );
-    
-    const child2 = await parentAgent.spawnChildAgent(
-      'Create user management',  
-      { purpose: 'users' }
-    );
-    
-    // Simulate both children modifying same file
-    await child1.executeCommand('write_files', {
-      files: [{
-        path: 'src/types/User.ts',
-        content: 'export interface User { id: string; email: string; }'
-      }]
-    });
-    
-    await child2.executeCommand('write_files', {
-      files: [{
-        path: 'src/types/User.ts', 
-        content: 'export interface User { id: string; name: string; }'
-      }]
-    });
-    
-    // Wait for both to complete
-    const results = await parentAgent.waitForChildrenCompletion();
-    
-    // Should handle conflict resolution
-    expect(results).toHaveLength(2);
-    const mergeResults = results.map(r => r.mergeResult);
-    
-    // At least one should have conflict resolution
-    const hasConflictResolution = mergeResults.some(
-      r => r?.conflictsResolved > 0
-    );
-    expect(hasConflictResolution).toBe(true);
-  });
-});
-```
-
-### Multi-tenant Isolation Tests
-
-```typescript
-describe('Multi-tenant Isolation', () => {
-  test('prevents cross-user workspace access', async () => {
-    const user1Workspace = await createUserWorkspace('user1', 'session1');
-    const user2Workspace = await createUserWorkspace('user2', 'session2');
-    
-    const agent1 = new KeenAgentSession('session1', {
-      vision: 'Test isolation',
-      workingDirectory: user1Workspace
-    });
-    
-    // Try to access user2's workspace (should fail)
-    await expect(
-      agent1.executeCommand('read_files', {
-        paths: [user2Workspace + '/secret.txt']
-      })
-    ).rejects.toThrow(/outside workspace/);
-  });
-  
-  test('enforces git repository isolation', async () => {
-    const user1Session = new KeenAgentSession('user1_session', {
-      vision: 'Create app',
-      workingDirectory: '/workspaces/user1/session1'
-    });
-    
-    const user2Session = new KeenAgentSession('user2_session', {
-      vision: 'Create app', 
-      workingDirectory: '/workspaces/user2/session2'
-    });
-    
-    // Both agents create git repositories
-    await user1Session.execute();
-    await user2Session.execute();
-    
-    // Repositories should be completely separate
-    const user1Git = new GitManager('/workspaces/user1/session1');
-    const user2Git = new GitManager('/workspaces/user2/session2');
-    
-    const user1History = await user1Git.getCommitHistory();
-    const user2History = await user2Git.getCommitHistory();
-    
-    // No shared commit history
-    expect(user1History).not.toEqual(user2History);
-  });
-});
-```
-
-### 1M Context Tests
-
-```typescript
-describe('1M Context Utilization', () => {
-  test('all agents use full 1M context window', async () => {
-    const agent = new KeenAgentSession('test_session', {
-      vision: 'Large codebase analysis',
-      workingDirectory: './test-workspace'
-    });
-    
-    const contextManager = agent.getContextManager();
-    const config = contextManager.getConfig();
-    
-    expect(config.contextWindowSize).toBe(1000000);
-    expect(config.enableExtendedContext).toBe(true);
-  });
-  
-  test('child agents inherit 1M context', async () => {
-    const parent = new KeenAgentSession('parent', {
-      vision: 'Complex multi-component system',
-      workingDirectory: './test-workspace'
-    });
-    
-    const child = await parent.spawnChildAgent(
-      'Handle specific component',
-      { purpose: 'component' }
-    );
-    
-    const childContextConfig = child.getContextManager().getConfig();
-    expect(childContextConfig.contextWindowSize).toBe(1000000);
-  });
-  
-  test('handles large project context efficiently', async () => {
-    // Create large project with many files
-    const largeProject = await createLargeTestProject({
-      files: 500,
-      avgFileSize: 2000 // 1M total characters
-    });
-    
-    const agent = new KeenAgentSession('large_project', {
-      vision: 'Analyze and refactor large codebase',
-      workingDirectory: largeProject.path
-    });
-    
-    const startTime = Date.now();
-    const result = await agent.execute();
-    const duration = Date.now() - startTime;
-    
-    // Should complete within reasonable time
-    expect(duration).toBeLessThan(300000); // 5 minutes
-    expect(result.success).toBe(true);
-  });
-});
-```
-
-## Integration Points
-
-**This Agent Core must integrate with:**
-- **Phase 1 (Database)**: Session persistence and progress tracking
-- **Phase 2 (API Gateway)**: Receive sanitized requests, maintain agent purity
-- **Phase 4 (WebSockets)**: Stream progress updates in real-time
-- **Phase 5 (Dashboard)**: Provide agent tree visualization data
-
-## Deliverables
+## Deliverables (Consolidated)
 
 1. **Enhanced AgentSession** with recursive spawning and multi-tenant support
-2. **Workspace isolation** system with security boundaries
-3. **Git manager** for branch-based recursive agent coordination
-4. **Context manager** ensuring 1M context utilization
-5. **Progress streaming** integration with real-time updates
-6. **Session persistence** for resumable agent execution
-7. **Comprehensive test suite** with isolation and spawning scenarios
-8. **Performance optimization** for concurrent multi-user execution
-9. **Documentation** with examples and integration guides
-10. **Security validation** ensuring complete user isolation
+2. **Workspace isolation** with strict FS & process boundaries
+3. **Git manager** with branch tracking; conflict logic retained behind flag
+4. **Context manager** for guaranteed 1M window
+5. **Progress streaming** over WS/SSE with backpressure controls
+6. **Session persistence** and resumability
+7. **Comprehensive test suite** & performance targets
+8. **Observability & audit** via metrics + logs + ledger
+9. **Docs & examples** aligned with code skeletons
+10. **Security validation** & RLS tests passing
+11. **Credit governance** enforced by supervisor, preserving purity
 
-**Remember:** The Agent Core is the heart of keen's innovation. It must preserve a2s2's autonomous capabilities while adding multi-tenant support and recursive spawning, all while maintaining complete agent purity. Agents must never know they're part of a commercial platform - they focus purely on software development.
+---
+
+**Remember:** The Agent Core is the heart of keen's innovation. It must preserve a2s2's autonomous capabilities while adding multi-tenant support and recursive spawning, all while maintaining complete agent purity. Agents must never know they're part of a commercial platform—they focus purely on software development.

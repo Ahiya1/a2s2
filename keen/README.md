@@ -1,52 +1,20 @@
-# keen Database Layer - Phase 1
+# keen Database Layer - Phase 1 Complete
 
-**Production-grade multi-tenant PostgreSQL foundation for the keen autonomous development platform**
+**Production-grade multi-tenant PostgreSQL foundation with Anthropic Claude integration for the keen autonomous development platform**
 
 ## 🎯 Overview
 
-Phase 1 implements a comprehensive database layer with:
+Phase 1 implements a comprehensive database layer with **full Anthropic Claude integration**:
 
 - **Multi-tenant PostgreSQL architecture** with complete user isolation
+- **1M Context Window** - All agents use full 1,000,000 token context
+- **Interleaved Thinking** - Advanced reasoning with thinking blocks
 - **Admin user** (ahiya.butman@gmail.com) with unlimited privileges and bypass logic
-- **Credit management system** with 5x markup over Claude API costs
+- **Credit management system** with accurate 5x markup over Claude API costs
 - **Row-level security** for tenant isolation
+- **Model evolution support** - Ready for Claude 4 migration
 - **Comprehensive testing suite** with 80%+ coverage requirement
 - **Shell-first validation** approach with direct command verification
-
-## 🏗️ Architecture
-
-### Core Tables (7 total)
-
-1. **`users`** - User management with admin privilege support
-2. **`auth_tokens`** - JWT and API key management with admin bypass
-3. **`credit_accounts`** - Credit balances with unlimited admin credits
-4. **`credit_transactions`** - Immutable transaction log with admin bypass tracking
-5. **`agent_sessions`** - Agent execution tracking with recursive spawning
-6. **`websocket_connections`** - Real-time streaming support
-7. **`daily_analytics`** - Admin dashboard metrics
-
-### Admin User Configuration
-
-- **Email:** ahiya.butman@gmail.com
-- **Password:** 2con-creator
-- **Role:** super_admin
-- **Privileges:** 
-  - Unlimited credits (no deductions)
-  - Bypass all rate limits
-  - Access all analytics and user data
-  - Priority execution queue
-  - Complete audit trail visibility
-
-### Credit System (5x Markup)
-
-```
-Claude API Cost → ×5 Markup → keen Credits
-
-Example:
-- Claude cost: $10.00
-- keen credits: $50.00 (10.00 × 5)
-- Admin bypass: $0.00 (tracked but not charged)
-```
 
 ## 🚀 Quick Start
 
@@ -56,8 +24,11 @@ Example:
 # Copy environment template
 cp .env.example .env
 
-# Configure database credentials
-# Edit .env with your PostgreSQL settings
+# Configure database and Anthropic credentials
+# Edit .env with your settings:
+# - PostgreSQL connection details
+# - ANTHROPIC_API_KEY=sk-ant-your-api-key-here
+# - CLAUDE_MODEL=claude-sonnet-4-20250514
 ```
 
 ### 2. Install Dependencies
@@ -85,74 +56,170 @@ npm run db:seed
 npm run db:reset
 ```
 
-### 5. Run Tests
-
-```bash
-# Run all tests with coverage
-npm test
-
-# Run specific test suites
-npm run test:unit
-npm run test:integration
-npm run test:security
-npm run test:performance
-```
-
-### 6. Validation
+### 5. Validate Platform
 
 ```bash
 # Run comprehensive validation
 chmod +x scripts/validate.sh
 ./scripts/validate.sh
+
+# Or validate programmatically
+node -e "import('./src/index.js').then(async m => console.log(await m.default.validatePlatform()))"
 ```
 
-## 📋 Shell-First Validation
+## 🤖 Anthropic Integration
 
-As required, all validation uses direct shell commands:
+### Core Features
 
-```bash
-# Database connection validation
-psql -U $DB_USER -d $DB_NAME -c "SELECT version();" || { echo "DB connection failed"; exit 1; }
+- **1M Context Window** - Full 1,000,000 token context for sophisticated reasoning
+- **Interleaved Thinking** - Advanced reasoning with thinking blocks
+- **Model Flexibility** - Support for current Claude 3.5 and future Claude 4
+- **Cost Accuracy** - Precise cost calculation with 5x markup for keen credits
+- **Production Ready** - Complete validation and error handling
 
-# Schema validation
-psql -U $DB_USER -d $DB_NAME -c "\dt" | grep -q "users" || { echo "Users table missing"; exit 1; }
-
-# Admin user validation
-psql -U $DB_USER -d $DB_NAME -c "SELECT COUNT(*) FROM users WHERE email='ahiya.butman@gmail.com' AND is_admin=true;" | grep -q "1" || { echo "Admin user missing"; exit 1; }
-
-# Test execution validation
-npm test --silent || { echo "Tests failed"; exit 1; }
-
-# Coverage validation
-npm test -- --coverage | grep -E "All files.*[8-9][0-9]%|All files.*100%" || { echo "Coverage below 80%"; exit 1; }
-```
-
-## 🔧 Usage Examples
-
-### Basic User Operations
+### Usage Example
 
 ```typescript
-import { keen } from './src/index.js';
+import { keen, AnthropicConfigManager } from "./src/index.js";
+
+// Initialize with Anthropic integration
+const platform = keen.getInstance();
+await platform.initialize();
+
+// Get Anthropic configuration
+const anthropic = platform.getAnthropicConfigManager();
+console.log("Model:", anthropic.getConfig().model);
+console.log("Extended Context:", anthropic.getConfig().enableExtendedContext);
+console.log("Thinking Enabled:", anthropic.getConfig().enableInterleaved);
+
+// Calculate costs for agent execution
+const cost = anthropic.calculateRequestCost(
+  300000, // input tokens (triggers extended pricing)
+  10000, // output tokens
+  5000 // thinking tokens
+);
+
+console.log("Claude API Cost:", cost.totalCost);
+console.log("keen Credit Cost:", cost.keenCreditCost); // 5x markup
+```
+
+## 🏗️ Architecture
+
+### Database Layer (7 Core Tables)
+
+1. **`users`** - User management with admin privilege support
+2. **`auth_tokens`** - JWT and API key management with admin bypass
+3. **`credit_accounts`** - Credit balances with unlimited admin credits
+4. **`credit_transactions`** - Immutable transaction log with admin bypass tracking
+5. **`agent_sessions`** - Agent execution tracking with thinking blocks
+6. **`websocket_connections`** - Real-time streaming support
+7. **`daily_analytics`** - Admin dashboard metrics
+
+### Anthropic Integration
+
+- **AnthropicConfigManager** - Complete configuration management
+- **1M Context Validation** - Ensures all agents use full context window
+- **Cost Calculation** - Accurate pricing with standard/extended tiers
+- **Beta Headers** - Automatic inclusion of required headers
+- **Model Evolution** - Support for current and future Claude models
+
+### Admin User Configuration
+
+- **Email:** ahiya.butman@gmail.com
+- **Password:** 2con-creator
+- **Role:** super_admin
+- **Privileges:**
+  - Unlimited credits (no deductions)
+  - Bypass all rate limits
+  - Access all analytics and user data
+  - Priority execution queue
+  - Complete audit trail visibility
+
+### Credit System (5x Markup)
+
+```
+Claude API Cost → ×5 Markup → keen Credits
+
+Standard Context (≤200K tokens):
+- Input: $0.015 per 1K tokens (Claude: $0.003 × 5)
+- Output: $0.075 per 1K tokens (Claude: $0.015 × 5)
+
+Extended Context (>200K tokens, 1M window):
+- Input: $0.030 per 1K tokens (Claude: $0.006 × 5)
+- Output: $0.1125 per 1K tokens (Claude: $0.0225 × 5)
+
+Admin bypass: $0.00 (tracked but not charged)
+```
+
+## 📋 Complete Usage Examples
+
+### Database Operations
+
+```typescript
+import { keen } from "./src/index.js";
 
 // Initialize database
 await keen.initialize();
 
 // Create regular user
 const user = await keen.users.createUser({
-  email: 'developer@example.com',
-  username: 'developer',
-  password: 'securepassword123'
+  email: "developer@example.com",
+  username: "developer",
+  password: "securepassword123",
 });
 
-// Create credit account
+// Create credit account with 1M context pricing
 const creditAccount = await keen.credits.createCreditAccount(user.id);
 
 // Add credits
 await keen.credits.addCredits({
   userId: user.id,
-  amount: new Decimal('100.00'),
-  description: 'Initial credit purchase'
+  amount: new Decimal("100.00"),
+  description: "Initial credit purchase",
 });
+```
+
+### Agent Session with Thinking
+
+```typescript
+// Create agent session with 1M context
+const session = await keen.sessions.createSession(
+  user.id,
+  {
+    sessionId: "unique-session-id",
+    gitBranch: "main",
+    vision: "Implement authentication system with thinking blocks",
+    workingDirectory: "/workspace/project",
+    agentOptions: {
+      contextWindow: 1000000,
+      thinkingEnabled: true,
+    },
+  },
+  userContext
+);
+
+// Store thinking block
+const thinkingBlock = {
+  id: "thinking-1",
+  timestamp: new Date(),
+  phase: "EXPLORE",
+  thinking_content: "I need to analyze the project structure first...",
+  context: { current_task: "authentication", confidence_level: 0.85 },
+  decision_made: {
+    action: "explore_files",
+    reasoning: "Understanding structure",
+  },
+};
+
+await keen.sessions.updateSession(
+  session.id,
+  {
+    thinkingBlock,
+    currentPhase: "EXPLORE",
+    tokensUsed: 45000, // Extended context usage
+  },
+  userContext
+);
 ```
 
 ### Admin Operations
@@ -160,87 +227,81 @@ await keen.credits.addCredits({
 ```typescript
 // Admin login
 const adminLogin = await keen.users.login({
-  email: 'ahiya.butman@gmail.com',
-  password: '2con-creator'
+  email: "ahiya.butman@gmail.com",
+  password: "2con-creator",
 });
 
 const adminContext = {
   userId: adminLogin.user.id,
   isAdmin: true,
-  adminPrivileges: adminLogin.user.admin_privileges
+  adminPrivileges: adminLogin.user.admin_privileges,
 };
 
-// Get platform analytics (admin only)
-const metrics = await keen.analytics.getPlatformMetrics(adminContext);
-
-// View all users (admin only)
-const allUsers = await keen.users.listUsers(100, 0, adminContext);
-
-// Admin credit operations (bypassed)
-const adminTransaction = await keen.credits.deductCredits({
-  userId: adminContext.userId,
-  claudeCostUSD: new Decimal('50.00'),
-  description: 'Admin operation'
-}, adminContext);
+// Admin agent execution (no credit deduction)
+const adminTransaction = await keen.credits.deductCredits(
+  {
+    userId: adminContext.userId,
+    claudeCostUSD: new Decimal("15.00"), // Large 1M context operation
+    description: "Admin agent execution with 1M context",
+  },
+  adminContext
+);
 // Result: is_admin_bypass=true, amount=0, no actual charge
+
+// Get platform analytics (admin only)
+const analytics = await keen.analytics.getPlatformMetrics(adminContext);
+console.log("Total Claude API costs:", analytics.totalClaudeCosts);
+console.log("Total keen revenue (5x):", analytics.totalRevenue);
 ```
 
-### Credit Management with 5x Markup
+## 🔧 Configuration Management
+
+### Environment Variables
+
+```bash
+# Database
+DB_HOST=localhost
+DB_NAME=keen_development
+DB_USER=keen_user
+DB_PASSWORD=secure_password
+
+# Anthropic (Required)
+ANTHROPIC_API_KEY=sk-ant-your-api-key-here
+
+# Model Configuration (Optional)
+CLAUDE_MODEL=claude-sonnet-4-20250514  # Default latest
+
+# Admin Configuration
+ADMIN_EMAIL=ahiya.butman@gmail.com
+ADMIN_PASSWORD=2con-creator
+
+# Credit System
+CREDIT_MARKUP_MULTIPLIER=5.0
+```
+
+### Anthropic Configuration
 
 ```typescript
-const userContext = { userId: user.id, isAdmin: false };
+// Custom configuration
+const customConfig = {
+  model: "claude-sonnet-4-20250514", // Future model
+  maxTokens: 20000,
+  thinkingBudget: 15000,
+  enableExtendedContext: true, // Always true in keen
+  enableInterleaved: true, // Always true in keen
+  enableWebSearch: true,
+  enableStreaming: true,
+};
 
-// Deduct credits with 5x markup
-const transaction = await keen.credits.deductCredits({
-  userId: user.id,
-  claudeCostUSD: new Decimal('8.00'), // Claude API cost
-  sessionId: 'session-123',
-  description: 'Agent execution'
-}, userContext);
-
-// Result:
-// - Claude cost: $8.00
-// - keen credits charged: $40.00 (8.00 × 5)
-// - Transaction type: 'usage'
-// - Balance deducted: 40.00 credits
+const keen = new KeenPlatform(undefined, customConfig);
 ```
 
-### Session Management
-
-```typescript
-// Create agent session
-const session = await keen.sessions.createSession(user.id, {
-  sessionId: 'unique-session-id',
-  gitBranch: 'main',
-  vision: 'Implement authentication system',
-  workingDirectory: '/workspace/project',
-  agentOptions: { contextWindow: 1000000 }
-}, userContext);
-
-// Update session progress
-await keen.sessions.updateSession(session.id, {
-  currentPhase: 'COMPLETE',
-  iterationCount: 5,
-  toolCallsCount: 12,
-  tokensUsed: 25000,
-  executionStatus: 'completed',
-  success: true
-}, userContext);
-```
-
-## 📊 Testing Strategy
+## 🧪 Testing
 
 ### Test Coverage Requirements (80%+)
 
-- **Unit Tests** - Individual component testing with mocking
-- **Integration Tests** - Complete workflow testing with real database
-- **Security Tests** - Multi-tenant isolation and admin privilege validation
-- **Performance Tests** - Concurrent operations and query optimization
-
-### Test Commands
-
 ```bash
-# Run all tests with coverage report
+# Run all tests with coverage
 npm test
 
 # Run specific test categories
@@ -249,27 +310,44 @@ npm run test:integration # Full database integration tests
 npm run test:security    # RLS and privilege testing
 npm run test:performance # Concurrent and performance tests
 
+# Test Anthropic integration specifically
+npm run test:unit -- AnthropicConfig
+
 # Coverage validation
 npm test -- --coverage --reporter=text-summary | grep -E "[8-9][0-9]%|100%"
 ```
 
+### Shell Validation
+
+```bash
+# Comprehensive platform validation
+./scripts/validate.sh
+
+# Manual validation steps
+psql -U $DB_USER -d $DB_NAME -c "SELECT version();" || echo "DB failed"
+node -e "import('./src/index.js').then(async m => {
+  const status = await m.default.validatePlatform();
+  console.log(status.ready ? '✅ Platform ready' : '❌ Issues:', status.issues);
+})"
+```
+
 ## 🔒 Security Features
 
-### Row-Level Security (RLS)
+### Multi-tenant Isolation
 
 ```sql
 -- Users can only access their own data
 CREATE POLICY user_isolation_policy ON agent_sessions
-USING (user_id = current_setting('app.current_user_id')::UUID OR 
+USING (user_id = current_setting('app.current_user_id')::UUID OR
        current_setting('app.is_admin_user', true)::BOOLEAN = true);
 ```
 
-### Multi-tenant Isolation
+### API Key Validation
 
-- Complete workspace separation between users
-- Database-level tenant isolation with RLS
-- Admin bypass with full audit trail
-- Encrypted data at rest and in transit
+```typescript
+AnthropicConfigManager.validateApiKey("sk-ant-valid-key"); // true
+AnthropicConfigManager.validateApiKey("invalid-key"); // false
+```
 
 ### Admin Privilege System
 
@@ -280,147 +358,149 @@ if (context?.isAdmin && context.adminPrivileges?.unlimited_credits) {
 }
 ```
 
-## 🎛️ Configuration
-
-### Environment Variables
-
-```bash
-# Database Configuration
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=keen_development
-DB_USER=keen_user
-DB_PASSWORD=secure_password
-
-# Admin Configuration
-ADMIN_EMAIL=ahiya.butman@gmail.com
-ADMIN_PASSWORD=2con-creator
-ADMIN_USERNAME=ahiya_admin
-
-# Credit System
-CREDIT_MARKUP_MULTIPLIER=5.0
-DEFAULT_DAILY_LIMIT=100.0
-DEFAULT_MONTHLY_LIMIT=1000.0
-
-# Security
-JWT_SECRET=your-super-secure-jwt-secret-key-here
-BCRYPT_ROUNDS=12
-```
-
-## 🔧 Database Operations
-
-### Migration Management
-
-```bash
-# Run migrations
-node dist/database/migrations/run.js
-
-# Run seeds
-node dist/database/seeds/run.js
-
-# Combined
-npm run db:reset
-```
-
-### Health Checks
-
-```bash
-# Test database connectivity
-node dist/index.js test
-
-# Initialize database
-node dist/index.js init
-```
-
-## 📈 Performance Characteristics
+## 📊 Performance Characteristics
 
 - **Connection Pooling** - Configurable pool size with health monitoring
+- **1M Context Optimization** - Intelligent context management and caching
 - **Query Optimization** - Indexes on all common query patterns
 - **Concurrent Safety** - Atomic transactions with proper locking
-- **Memory Efficiency** - Decimal.js for financial precision without floating point errors
-- **Scalability** - Designed for thousands of concurrent users
+- **Memory Efficiency** - Decimal.js for financial precision
+- **Extended Context Costs** - Accurate tracking of >200K token pricing
+
+## 🚀 Model Evolution Support
+
+### Current (Late 2024)
+
+- **Primary:** `claude-sonnet-4-20250514` (Latest Claude 3.5)
+
+### Future Migration Path
+
+```bash
+# When Claude 4 becomes available
+CLAUDE_MODEL=claude-sonnet-4-20250514
+```
+
+The system automatically validates model names and provides migration paths.
 
 ## 🎯 Phase 1 Success Criteria
 
-### ✅ Database Schema
+### ✅ Database Foundation
+
 - [x] 7 core tables with proper relationships
 - [x] Row-level security for multi-tenant isolation
 - [x] Admin user with unlimited privileges
 - [x] Credit system with 5x markup tracking
 
-### ✅ TypeScript Implementation  
-- [x] DatabaseManager with connection pooling
-- [x] DAO classes with admin handling
-- [x] Multi-tenant user context
-- [x] Comprehensive error handling
+### ✅ Anthropic Integration
 
-### ✅ Testing Suite
+- [x] AnthropicConfigManager with keen requirements
+- [x] 1M context window validation and enforcement
+- [x] Interleaved thinking support with beta headers
+- [x] Accurate cost calculation with extended pricing
+- [x] Model evolution support (Claude 3.5 → Claude 4)
+
+### ✅ Testing & Validation
+
 - [x] Unit tests with mocking
 - [x] Integration tests with real database
 - [x] Security tests for RLS and admin privileges
 - [x] Performance tests for concurrent operations
+- [x] Anthropic configuration validation tests
 - [x] 80%+ coverage requirement
 
 ### ✅ Shell Validation
+
 - [x] Direct shell command validation
 - [x] Database connectivity checks
 - [x] Schema validation
 - [x] Admin user verification
+- [x] Anthropic configuration validation
 - [x] Test execution validation
 
 ## 🔗 Integration Points
 
 ### Phase 2 API Gateway
+
 - User authentication endpoints
-- Credit validation APIs
+- Credit validation APIs with accurate Claude pricing
 - Admin analytics endpoints
 - Rate limiting with admin bypass
+- Anthropic configuration validation
 
 ### Phase 3 Agent Core
+
 - Session persistence and management
+- 1M context window utilization
+- Interleaved thinking block storage
 - Cost tracking and credit deduction
 - Admin session priority handling
 - Recursive agent hierarchy support
 
 ### Phase 4 WebSocket Streaming
+
 - Real-time connection management
+- Thinking block streaming
 - Admin monitoring capabilities
 - Event routing and filtering
 
 ### Phase 5 Dashboard
+
 - Analytics API integration
 - Admin interface for user management
-- Credit system administration
+- Credit system administration with Claude cost breakdown
 - Real-time metrics display
+- Anthropic usage analytics
 
-## 📝 Development Notes
+## 📈 Ready for Production
 
-### Admin User Details
-- **Created during seed process**
-- **Password**: Uses bcrypt with 12 rounds
-- **Privileges**: Stored as JSONB for flexibility
-- **Credit Account**: Unlimited credits (unlimited_credits=true)
-- **Bypass Logic**: All credit operations bypass deduction
+This Phase 1 implementation provides the complete foundation for a production-grade autonomous development platform:
 
-### Credit System Design
-- **Atomic Transactions**: Prevents double-spending
-- **5x Markup**: Transparent pricing over Claude API costs
-- **Admin Tracking**: Full audit trail of bypass operations
-- **Financial Precision**: Decimal.js prevents floating point errors
+- **Database Layer** - Multi-tenant, secure, scalable
+- **Anthropic Integration** - 1M context, thinking blocks, cost optimization
+- **Admin Access** - Unlimited usage with comprehensive analytics
+- **Cost Management** - Transparent 5x markup with accurate Claude API pricing
+- **Model Evolution** - Ready for Claude 4 when available
+- **Testing** - Comprehensive validation and monitoring
 
-### Multi-tenant Security
-- **Complete Isolation**: Users cannot access other user data
-- **Admin Override**: Admin can access all data for analytics
-- **Context Management**: User context set per connection
-- **Audit Trail**: Complete logging of all operations
+keen is now ready to scale to support thousands of concurrent users with sophisticated AI capabilities while maintaining security, performance, and cost transparency.
 
-## 🚀 Ready for Phase 2
+## CLI Commands
 
-This Phase 1 implementation provides the complete database foundation required for:
+keen provides three main CLI commands for autonomous development:
 
-- **API Gateway** - Authentication, credit validation, admin endpoints
-- **Agent Core** - Session persistence, cost tracking, admin bypass
-- **WebSocket Layer** - Connection management, admin monitoring
-- **Dashboard** - Analytics, user management, admin interface
+### Quick Start
 
-The database layer is production-ready with comprehensive testing, security, and performance optimization.
+```bash
+# Autonomous execution with natural language
+keen breathe "Create a React todo app with TypeScript"
+
+# Execute from vision file  
+keen breath -f project-vision.md
+
+# Interactive conversation mode
+keen converse
+```
+
+### Key Features
+
+- **`keen breathe <vision>`** - Execute autonomous agent with full tool access
+- **`keen breath -f <file>`** - Execute tasks from vision files
+- **`keen converse`** - Interactive chat mode with 'breathe' synthesis
+
+### Pricing
+
+Claude Sonnet 4 costs with 5x keen markup:
+- Standard context: $0.003/$0.015 per 1K tokens (input/output) 
+- Extended context: $0.006/$0.0225 per 1K tokens (>200K)
+- Admin accounts bypass credit system
+
+For detailed CLI documentation, see [CLI_COMMANDS.md](docs/CLI_COMMANDS.md).
+
+## Recent Updates
+
+- ✅ Fixed all unit tests (AnthropicConfig, UserDAO, CreditDAO)
+- ✅ Updated Claude Sonnet 4 pricing (2024/2025 rates)
+- ✅ Documented CLI commands: keen breathe, keen breath -f, keen converse  
+- ✅ Improved test coverage with mock database support
+- ✅ Enhanced environment variable handling for dynamic configuration
+

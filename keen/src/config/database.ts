@@ -3,10 +3,10 @@
  * Handles environment-specific database settings
  */
 
-import dotenv from 'dotenv';
+import { EnvLoader } from './EnvLoader.js';
 
-// Load environment variables
-dotenv.config();
+// Load environment variables from multiple locations
+EnvLoader.load();
 
 export interface DatabaseConfig {
   host: string;

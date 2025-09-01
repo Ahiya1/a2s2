@@ -234,7 +234,7 @@ export class AnalyticsDAO {
     context?: UserContext
   ): Promise<DailyAnalytics[]> {
     let whereClause = 'WHERE date_bucket BETWEEN $1 AND $2';
-    const params = [startDate, endDate];
+    const params = [startDate.toISOString(), endDate.toISOString()];
     let paramIndex = 3;
 
     if (userId) {
@@ -243,7 +243,7 @@ export class AnalyticsDAO {
     } else if (!context?.isAdmin) {
       // Regular users can only see their own analytics
       whereClause += ` AND user_id = $${paramIndex++}`;
-      params.push(context?.userId);
+      params.push(context?.userId || '');
     }
 
     const analytics = await this.db.query<DailyAnalytics>(
@@ -407,7 +407,7 @@ export class AnalyticsDAO {
     }
 
     let whereClause = 'WHERE date_bucket BETWEEN $1 AND $2';
-    const params = [startDate, endDate];
+    const params = [startDate.toISOString(), endDate.toISOString()];
     let paramIndex = 3;
 
     if (userId) {
@@ -416,7 +416,7 @@ export class AnalyticsDAO {
     } else if (!context?.isAdmin) {
       // Regular users can only see their own data
       whereClause += ` AND user_id = $${paramIndex++}`;
-      params.push(context?.userId);
+      params.push(context?.userId || '');
     }
 
     const analytics = await this.db.query<DailyAnalytics>(

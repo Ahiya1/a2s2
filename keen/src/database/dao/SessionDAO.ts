@@ -1,6 +1,6 @@
 /**
- * SessionDAO - Agent session management with admin privileges
- * Handles session lifecycle, recursive spawning, and admin monitoring
+ * SessionDAO - Enhanced agent session management with interleaved thinking
+ * Handles session lifecycle, recursive spawning, message storage, and thinking blocks
  */
 
 import { v4 as uuidv4 } from 'uuid';
@@ -37,6 +37,100 @@ export interface AgentSession {
   streaming_time?: number;
   websocket_connections: string[];
   agent_options: Record<string, any>;
+  
+  // Enhanced thinking and message support
+  thinking_blocks: ThinkingBlockSummary[];
+  reasoning_chain: string[];
+  decision_points: Record<string, DecisionPoint>;
+  confidence_levels: ConfidenceMetrics;
+  
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface ThinkingBlockSummary {
+  id: string;
+  type: string;
+  content: string;
+  confidence: number;
+  timestamp: Date;
+  phase: string;
+}
+
+export interface DecisionPoint {
+  decision: string;
+  reasoning: string;
+  confidence: number;
+  alternatives: string[];
+}
+
+export interface ConfidenceMetrics {
+  current: number;
+  trend: number[];
+  min: number;
+  max: number;
+}
+
+export interface AgentMessage {
+  id: string;
+  session_id: string;
+  user_id: string;
+  message_index: number;
+  message_type: 'user' | 'assistant' | 'system' | 'thinking';
+  content: string;
+  thinking_content?: string;
+  phase?: 'EXPLORE' | 'PLAN' | 'SUMMON' | 'COMPLETE';
+  iteration: number;
+  tool_calls: any[];
+  tool_results: any[];
+  confidence_level?: number;
+  reasoning?: string;
+  alternatives_considered: string[];
+  decision_made?: string;
+  tokens_used: number;
+  processing_time_ms?: number;
+  message_status: 'active' | 'edited' | 'deleted';
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface ThinkingBlock {
+  id: string;
+  session_id: string;
+  message_id?: string;
+  user_id: string;
+  sequence_number: number;
+  thinking_type: 'analysis' | 'planning' | 'decision' | 'reflection' | 'error_recovery';
+  thinking_content: string;
+  context_snapshot: Record<string, any>;
+  problem_identified?: string;
+  options_considered: string[];
+  decision_made?: string;
+  reasoning?: string;
+  confidence_level?: number;
+  predicted_outcome?: string;
+  actual_outcome?: string;
+  success_indicator?: boolean;
+  thinking_start_time: Date;
+  thinking_duration_ms?: number;
+  phase?: 'EXPLORE' | 'PLAN' | 'SUMMON' | 'COMPLETE';
+  iteration: number;
+  created_at: Date;
+}
+
+export interface ConversationSummary {
+  id: string;
+  session_id: string;
+  user_id: string;
+  phase: 'EXPLORE' | 'PLAN' | 'SUMMON' | 'COMPLETE';
+  summary_text: string;
+  key_decisions: string[];
+  major_outcomes: string[];
+  messages_count: number;
+  thinking_blocks_count: number;
+  avg_confidence?: number;
+  start_time: Date;
+  end_time: Date;
   created_at: Date;
   updated_at: Date;
 }
@@ -66,6 +160,38 @@ export interface UpdateSessionRequest {
   websocketConnections?: string[];
 }
 
+export interface AddMessageRequest {
+  messageType: 'user' | 'assistant' | 'system' | 'thinking';
+  content: string;
+  thinkingContent?: string;
+  phase?: 'EXPLORE' | 'PLAN' | 'SUMMON' | 'COMPLETE';
+  iteration?: number;
+  toolCalls?: any[];
+  toolResults?: any[];
+  confidenceLevel?: number;
+  reasoning?: string;
+  alternativesConsidered?: string[];
+  decisionMade?: string;
+  tokensUsed?: number;
+  processingTimeMs?: number;
+}
+
+export interface AddThinkingBlockRequest {
+  messageId?: string;
+  thinkingType: 'analysis' | 'planning' | 'decision' | 'reflection' | 'error_recovery';
+  thinkingContent: string;
+  contextSnapshot?: Record<string, any>;
+  problemIdentified?: string;
+  optionsConsidered?: string[];
+  decisionMade?: string;
+  reasoning?: string;
+  confidenceLevel?: number;
+  predictedOutcome?: string;
+  phase?: 'EXPLORE' | 'PLAN' | 'SUMMON' | 'COMPLETE';
+  iteration?: number;
+  thinkingDurationMs?: number;
+}
+
 export class SessionDAO {
   constructor(private db: DatabaseManager) {}
 
@@ -82,12 +208,16 @@ export class SessionDAO {
     // Calculate session depth for recursive spawning
     let sessionDepth = 0;
     if (request.parentSessionId) {
-      const [parentSession] = await this.db.query<{ session_depth: number }>(
+      const parentResult = await this.db.query<{ session_depth: number }>(
         'SELECT session_depth FROM agent_sessions WHERE id = $1',
         [request.parentSessionId],
         context
       );
-      sessionDepth = (parentSession?.session_depth || 0) + 1;
+      const parentSession = parentResult[0];
+      // Only increment depth if parent actually exists
+      if (parentSession) {
+        sessionDepth = (parentSession.session_depth || 0) + 1;
+      }
     }
 
     const [session] = await this.db.query<AgentSession>(
@@ -99,14 +229,16 @@ export class SessionDAO {
         iteration_count, tool_calls_count, total_cost, tokens_used,
         context_window_size, files_modified, files_created, files_deleted,
         execution_status, streaming_enabled, websocket_connections,
-        agent_options, created_at, updated_at
+        agent_options, thinking_blocks, reasoning_chain, decision_points,
+        confidence_levels, created_at, updated_at
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, 'EXPLORE',
         NOW(), NOW(), NOW(),
         0, 0, 0.000000, 0,
         1000000, '{}', '{}', '{}',
         'running', true, '{}',
-        $9, NOW(), NOW()
+        $9, '[]'::jsonb, '{}', '{}'::jsonb,
+        '{}'::jsonb, NOW(), NOW()
       )
       RETURNING *
       `,
@@ -128,39 +260,349 @@ export class SessionDAO {
   }
 
   /**
-   * Get session by ID
+   * Add message to session conversation
+   */
+  async addMessage(
+    sessionId: string,
+    request: AddMessageRequest,
+    context?: UserContext
+  ): Promise<AgentMessage> {
+    // Get session to extract user_id and get next message index
+    const session = await this.getSessionById(sessionId, context);
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    // Get next message index
+    const indexResult = await this.db.query<{ max_index: number }>(
+      'SELECT COALESCE(MAX(message_index), -1) + 1 as max_index FROM agent_messages WHERE session_id = $1',
+      [sessionId],
+      context
+    );
+    
+    const messageIndex = indexResult[0]?.max_index || 0;
+    const messageId = uuidv4();
+
+    const [message] = await this.db.query<AgentMessage>(
+      `
+      INSERT INTO agent_messages (
+        id, session_id, user_id, message_index, message_type, content,
+        thinking_content, phase, iteration, tool_calls, tool_results,
+        confidence_level, reasoning, alternatives_considered, decision_made,
+        tokens_used, processing_time_ms, message_status, created_at, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'active', NOW(), NOW()
+      )
+      RETURNING *
+      `,
+      [
+        messageId,
+        sessionId,
+        session.user_id,
+        messageIndex,
+        request.messageType,
+        request.content,
+        request.thinkingContent || null,
+        request.phase || session.current_phase,
+        request.iteration || session.iteration_count,
+        JSON.stringify(request.toolCalls || []),
+        JSON.stringify(request.toolResults || []),
+        request.confidenceLevel || null,
+        request.reasoning || null,
+        request.alternativesConsidered || [],
+        request.decisionMade || null,
+        request.tokensUsed || 0,
+        request.processingTimeMs || null,
+      ],
+      context
+    );
+
+    // Update session last_activity_at
+    await this.updateSessionActivity(sessionId, context);
+
+    return this.transformMessage(message);
+  }
+
+  /**
+   * Add thinking block to session
+   */
+  async addThinkingBlock(
+    sessionId: string,
+    request: AddThinkingBlockRequest,
+    context?: UserContext
+  ): Promise<ThinkingBlock> {
+    // Get session to extract user_id and get next sequence number
+    const session = await this.getSessionById(sessionId, context);
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    // Get next sequence number
+    const seqResult = await this.db.query<{ max_seq: number }>(
+      'SELECT COALESCE(MAX(sequence_number), -1) + 1 as max_seq FROM thinking_blocks WHERE session_id = $1',
+      [sessionId],
+      context
+    );
+    
+    const sequenceNumber = seqResult[0]?.max_seq || 0;
+    const thinkingId = uuidv4();
+
+    const [thinkingBlock] = await this.db.query<ThinkingBlock>(
+      `
+      INSERT INTO thinking_blocks (
+        id, session_id, message_id, user_id, sequence_number, thinking_type,
+        thinking_content, context_snapshot, problem_identified, options_considered,
+        decision_made, reasoning, confidence_level, predicted_outcome,
+        thinking_start_time, thinking_duration_ms, phase, iteration, created_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), $15, $16, $17, NOW()
+      )
+      RETURNING *
+      `,
+      [
+        thinkingId,
+        sessionId,
+        request.messageId || null,
+        session.user_id,
+        sequenceNumber,
+        request.thinkingType,
+        request.thinkingContent,
+        JSON.stringify(request.contextSnapshot || {}),
+        request.problemIdentified || null,
+        request.optionsConsidered || [],
+        request.decisionMade || null,
+        request.reasoning || null,
+        request.confidenceLevel || null,
+        request.predictedOutcome || null,
+        request.thinkingDurationMs || null,
+        request.phase || session.current_phase,
+        request.iteration || session.iteration_count,
+      ],
+      context
+    );
+
+    // Update session last_activity_at (trigger will handle thinking_blocks aggregation)
+    await this.updateSessionActivity(sessionId, context);
+
+    return this.transformThinkingBlock(thinkingBlock);
+  }
+
+  /**
+   * Get sessions for a specific user with pagination
+   */
+  async getUserSessions(
+    userId: string,
+    limit: number = 50,
+    offset: number = 0,
+    context?: UserContext
+  ): Promise<{
+    sessions: AgentSession[];
+    total: number;
+  }> {
+    // Get total count
+    const countResult = await this.db.query<{ count: number }>(
+      'SELECT COUNT(*) as count FROM agent_sessions WHERE user_id = $1',
+      [userId],
+      context
+    );
+    
+    const total = parseInt(countResult[0]?.count?.toString() || '0', 10);
+
+    // Get sessions
+    const sessions = await this.db.query<AgentSession>(
+      `
+      SELECT * FROM agent_sessions 
+      WHERE user_id = $1 
+      ORDER BY last_activity_at DESC 
+      LIMIT $2 OFFSET $3
+      `,
+      [userId, limit, offset],
+      context
+    );
+
+    return {
+      sessions: sessions.map(this.transformSession),
+      total
+    };
+  }
+
+  /**
+   * Get session messages with optional filtering
+   */
+  async getSessionMessages(
+    sessionId: string,
+    options: {
+      messageType?: 'user' | 'assistant' | 'system' | 'thinking';
+      phase?: 'EXPLORE' | 'PLAN' | 'SUMMON' | 'COMPLETE';
+      limit?: number;
+      offset?: number;
+    } = {},
+    context?: UserContext
+  ): Promise<AgentMessage[]> {
+    let whereClause = 'WHERE session_id = $1 AND message_status = \'active\'';
+    const params: any[] = [sessionId];
+    let paramIndex = 2;
+
+    if (options.messageType) {
+      whereClause += ` AND message_type = $${paramIndex++}`;
+      params.push(options.messageType);
+    }
+
+    if (options.phase) {
+      whereClause += ` AND phase = $${paramIndex++}`;
+      params.push(options.phase);
+    }
+
+    const limitClause = options.limit ? `LIMIT $${paramIndex++}` : '';
+    if (options.limit) params.push(options.limit.toString());
+
+    const offsetClause = options.offset ? `OFFSET $${paramIndex++}` : '';
+    if (options.offset) params.push(options.offset.toString());
+
+    const messages = await this.db.query<AgentMessage>(
+      `
+      SELECT * FROM agent_messages 
+      ${whereClause}
+      ORDER BY message_index ASC
+      ${limitClause} ${offsetClause}
+      `,
+      params,
+      context
+    );
+
+    return messages.map(this.transformMessage);
+  }
+
+  /**
+   * Get session thinking blocks
+   */
+  async getSessionThinkingBlocks(
+    sessionId: string,
+    options: {
+      thinkingType?: 'analysis' | 'planning' | 'decision' | 'reflection' | 'error_recovery';
+      phase?: 'EXPLORE' | 'PLAN' | 'SUMMON' | 'COMPLETE';
+      limit?: number;
+      offset?: number;
+    } = {},
+    context?: UserContext
+  ): Promise<ThinkingBlock[]> {
+    let whereClause = 'WHERE session_id = $1';
+    const params: any[] = [sessionId];
+    let paramIndex = 2;
+
+    if (options.thinkingType) {
+      whereClause += ` AND thinking_type = $${paramIndex++}`;
+      params.push(options.thinkingType);
+    }
+
+    if (options.phase) {
+      whereClause += ` AND phase = $${paramIndex++}`;
+      params.push(options.phase);
+    }
+
+    const limitClause = options.limit ? `LIMIT $${paramIndex++}` : '';
+    if (options.limit) params.push(options.limit.toString());
+
+    const offsetClause = options.offset ? `OFFSET $${paramIndex++}` : '';
+    if (options.offset) params.push(options.offset.toString());
+
+    const thinkingBlocks = await this.db.query<ThinkingBlock>(
+      `
+      SELECT * FROM thinking_blocks 
+      ${whereClause}
+      ORDER BY sequence_number ASC
+      ${limitClause} ${offsetClause}
+      `,
+      params,
+      context
+    );
+
+    return thinkingBlocks.map(this.transformThinkingBlock);
+  }
+
+  /**
+   * Generate conversation summary for a phase
+   */
+  async generateConversationSummary(
+    sessionId: string,
+    phase: 'EXPLORE' | 'PLAN' | 'SUMMON' | 'COMPLETE',
+    context?: UserContext
+  ): Promise<ConversationSummary> {
+    const [summary] = await this.db.query<{ id: string }>(
+      'SELECT generate_conversation_summary($1, $2) as id',
+      [sessionId, phase],
+      context
+    );
+
+    if (!summary.id) {
+      throw new Error('Failed to generate conversation summary');
+    }
+
+    // Fetch the created summary
+    const [createdSummary] = await this.db.query<ConversationSummary>(
+      'SELECT * FROM conversation_summaries WHERE id = $1',
+      [summary.id],
+      context
+    );
+
+    return this.transformSummary(createdSummary);
+  }
+
+  /**
+   * Get full conversation history (messages + thinking blocks interleaved)
+   */
+  async getFullConversationHistory(
+    sessionId: string,
+    context?: UserContext
+  ): Promise<{
+    messages: AgentMessage[];
+    thinkingBlocks: ThinkingBlock[];
+    summaries: ConversationSummary[];
+  }> {
+    const [messages, thinkingBlocks, summaries] = await Promise.all([
+      this.getSessionMessages(sessionId, {}, context),
+      this.getSessionThinkingBlocks(sessionId, {}, context),
+      this.getConversationSummaries(sessionId, context),
+    ]);
+
+    return { messages, thinkingBlocks, summaries };
+  }
+
+  /**
+   * Get conversation summaries for session
+   */
+  async getConversationSummaries(
+    sessionId: string,
+    context?: UserContext
+  ): Promise<ConversationSummary[]> {
+    const summaries = await this.db.query<ConversationSummary>(
+      'SELECT * FROM conversation_summaries WHERE session_id = $1 ORDER BY start_time ASC',
+      [sessionId],
+      context
+    );
+
+    return summaries.map(this.transformSummary);
+  }
+
+  /**
+   * Get session by ID (enhanced with thinking data)
    */
   async getSessionById(
     sessionId: string,
     context?: UserContext
   ): Promise<AgentSession | null> {
-    const [session] = await this.db.query<AgentSession>(
+    const result = await this.db.query<AgentSession>(
       'SELECT * FROM agent_sessions WHERE id = $1',
       [sessionId],
       context
     );
+    const session = result[0];
 
     return session ? this.transformSession(session) : null;
   }
 
   /**
-   * Get session by session_id string
-   */
-  async getSessionBySessionId(
-    sessionId: string,
-    context?: UserContext
-  ): Promise<AgentSession | null> {
-    const [session] = await this.db.query<AgentSession>(
-      'SELECT * FROM agent_sessions WHERE session_id = $1',
-      [sessionId],
-      context
-    );
-
-    return session ? this.transformSession(session) : null;
-  }
-
-  /**
-   * Update session progress
+   * Update session progress (enhanced)
    */
   async updateSession(
     sessionId: string,
@@ -168,7 +610,7 @@ export class SessionDAO {
     context?: UserContext
   ): Promise<AgentSession> {
     const setClause = [];
-    const values = [];
+    const values: any[] = [];
     let paramIndex = 1;
 
     if (updates.currentPhase !== undefined) {
@@ -263,308 +705,15 @@ export class SessionDAO {
   }
 
   /**
-   * Get user sessions with pagination
+   * Update session activity timestamp
    */
-  async getUserSessions(
-    userId: string,
-    limit: number = 50,
-    offset: number = 0,
-    context?: UserContext
-  ): Promise<{
-    sessions: AgentSession[];
-    total: number;
-  }> {
-    const [{ count }] = await this.db.query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM agent_sessions WHERE user_id = $1',
-      [userId],
-      context
-    );
-
-    const sessions = await this.db.query<AgentSession>(
-      `
-      SELECT * FROM agent_sessions 
-      WHERE user_id = $1 
-      ORDER BY start_time DESC 
-      LIMIT $2 OFFSET $3
-      `,
-      [userId, limit, offset],
-      context
-    );
-
-    return {
-      sessions: sessions.map(this.transformSession),
-      total: parseInt(count.toString(), 10),
-    };
-  }
-
-  /**
-   * Get active sessions (admin can see all, users see only their own)
-   */
-  async getActiveSessions(
-    limit: number = 100,
-    context?: UserContext
-  ): Promise<AgentSession[]> {
-    let query: string;
-    let params: any[];
-
-    if (context?.isAdmin) {
-      // Admin can see all active sessions
-      query = `
-        SELECT * FROM agent_sessions 
-        WHERE execution_status = 'running'
-        ORDER BY last_activity_at DESC 
-        LIMIT $1
-      `;
-      params = [limit];
-    } else {
-      // Regular users see only their own sessions
-      query = `
-        SELECT * FROM agent_sessions 
-        WHERE execution_status = 'running' AND user_id = $1
-        ORDER BY last_activity_at DESC 
-        LIMIT $2
-      `;
-      params = [context?.userId, limit];
-    }
-
-    const sessions = await this.db.query<AgentSession>(query, params, context);
-    return sessions.map(this.transformSession);
-  }
-
-  /**
-   * Get recursive session tree (parent and all children)
-   */
-  async getSessionTree(
-    rootSessionId: string,
-    context?: UserContext
-  ): Promise<AgentSession[]> {
-    const sessions = await this.db.query<AgentSession>(
-      `
-      WITH RECURSIVE session_tree AS (
-        -- Base case: root session
-        SELECT * FROM agent_sessions WHERE id = $1
-        
-        UNION ALL
-        
-        -- Recursive case: children sessions
-        SELECT s.* 
-        FROM agent_sessions s
-        INNER JOIN session_tree st ON s.parent_session_id = st.id
-      )
-      SELECT * FROM session_tree ORDER BY session_depth, start_time
-      `,
-      [rootSessionId],
-      context
-    );
-
-    return sessions.map(this.transformSession);
-  }
-
-  /**
-   * Complete session with final results
-   */
-  async completeSession(
+  private async updateSessionActivity(
     sessionId: string,
-    success: boolean,
-    completionReport?: Record<string, any>,
-    errorMessage?: string,
-    context?: UserContext
-  ): Promise<AgentSession> {
-    return await this.updateSession(
-      sessionId,
-      {
-        executionStatus: success ? 'completed' : 'failed',
-        success,
-        completionReport,
-        errorMessage,
-      },
-      context
-    );
-  }
-
-  /**
-   * Get session analytics (admin can see all users)
-   */
-  async getSessionAnalytics(
-    startDate?: Date,
-    endDate?: Date,
-    context?: UserContext
-  ): Promise<{
-    totalSessions: number;
-    completedSessions: number;
-    failedSessions: number;
-    avgSessionDuration: number;
-    totalTokensUsed: number;
-    totalCost: Decimal;
-    maxRecursionDepth: number;
-    topBranches: Array<{
-      gitBranch: string;
-      sessionCount: number;
-      avgDuration: number;
-    }>;
-  }> {
-    let whereClause = '';
-    const params = [];
-    let paramIndex = 1;
-
-    // Admin can see all users, regular users only their own
-    if (!context?.isAdmin && context?.userId) {
-      whereClause = 'WHERE user_id = $1';
-      params.push(context.userId);
-      paramIndex++;
-    }
-
-    if (startDate && endDate) {
-      const dateClause = `start_time BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
-      whereClause = whereClause ? `${whereClause} AND ${dateClause}` : `WHERE ${dateClause}`;
-      params.push(startDate, endDate);
-    }
-
-    const [analytics] = await this.db.query(
-      `
-      SELECT 
-        COUNT(*) as total_sessions,
-        COUNT(*) FILTER (WHERE execution_status = 'completed') as completed_sessions,
-        COUNT(*) FILTER (WHERE execution_status = 'failed') as failed_sessions,
-        COALESCE(AVG(EXTRACT(EPOCH FROM (COALESCE(end_time, NOW()) - start_time))), 0) as avg_session_duration,
-        COALESCE(SUM(tokens_used), 0) as total_tokens_used,
-        COALESCE(SUM(total_cost), 0) as total_cost,
-        COALESCE(MAX(session_depth), 0) as max_recursion_depth
-      FROM agent_sessions
-      ${whereClause}
-      `,
-      params,
-      context
-    );
-
-    const topBranches = await this.db.query(
-      `
-      SELECT 
-        git_branch,
-        COUNT(*) as session_count,
-        COALESCE(AVG(EXTRACT(EPOCH FROM (COALESCE(end_time, NOW()) - start_time))), 0) as avg_duration
-      FROM agent_sessions
-      ${whereClause}
-      GROUP BY git_branch
-      ORDER BY session_count DESC
-      LIMIT 10
-      `,
-      params,
-      context
-    );
-
-    return {
-      totalSessions: parseInt(analytics.total_sessions || '0'),
-      completedSessions: parseInt(analytics.completed_sessions || '0'),
-      failedSessions: parseInt(analytics.failed_sessions || '0'),
-      avgSessionDuration: parseFloat(analytics.avg_session_duration || '0'),
-      totalTokensUsed: parseInt(analytics.total_tokens_used || '0'),
-      totalCost: new Decimal(analytics.total_cost || 0),
-      maxRecursionDepth: parseInt(analytics.max_recursion_depth || '0'),
-      topBranches: topBranches.map((branch: any) => ({
-        gitBranch: branch.git_branch,
-        sessionCount: parseInt(branch.session_count),
-        avgDuration: parseFloat(branch.avg_duration),
-      })),
-    };
-  }
-
-  /**
-   * Get sessions by git branch
-   */
-  async getSessionsByBranch(
-    gitBranch: string,
-    context?: UserContext
-  ): Promise<AgentSession[]> {
-    const sessions = await this.db.query<AgentSession>(
-      'SELECT * FROM agent_sessions WHERE git_branch = $1 ORDER BY start_time DESC',
-      [gitBranch],
-      context
-    );
-
-    return sessions.map(this.transformSession);
-  }
-
-  /**
-   * Cancel session (only owner or admin)
-   */
-  async cancelSession(
-    sessionId: string,
-    reason: string,
-    context?: UserContext
-  ): Promise<boolean> {
-    const session = await this.getSessionById(sessionId, context);
-    
-    if (!session) {
-      throw new Error('Session not found');
-    }
-
-    // Only session owner or admin can cancel
-    if (!context?.isAdmin && session.user_id !== context?.userId) {
-      throw new Error('Insufficient privileges to cancel this session');
-    }
-
-    const result = await this.db.query(
-      `
-      UPDATE agent_sessions 
-      SET execution_status = 'cancelled', 
-          error_message = $1, 
-          end_time = NOW(),
-          updated_at = NOW()
-      WHERE id = $2
-      `,
-      [reason, sessionId],
-      context
-    );
-
-    return result.length > 0;
-  }
-
-  /**
-   * Get session hierarchy (parent and children)
-   */
-  async getSessionHierarchy(
-    rootSessionId: string,
-    context?: UserContext
-  ): Promise<{
-    root: AgentSession;
-    children: AgentSession[];
-    depth: number;
-  }> {
-    const tree = await this.getSessionTree(rootSessionId, context);
-    
-    if (tree.length === 0) {
-      throw new Error('Session not found');
-    }
-
-    const root = tree[0];
-    const children = tree.slice(1);
-    const maxDepth = Math.max(...tree.map(s => s.session_depth));
-
-    return {
-      root,
-      children,
-      depth: maxDepth,
-    };
-  }
-
-  /**
-   * Update session cost (called after credit deduction)
-   */
-  async updateSessionCost(
-    sessionId: string,
-    additionalCost: Decimal,
     context?: UserContext
   ): Promise<void> {
     await this.db.query(
-      `
-      UPDATE agent_sessions 
-      SET total_cost = total_cost + $1,
-          last_activity_at = NOW(),
-          updated_at = NOW()
-      WHERE id = $2
-      `,
-      [additionalCost.toString(), sessionId],
+      'UPDATE agent_sessions SET last_activity_at = NOW() WHERE id = $1',
+      [sessionId],
       context
     );
   }
@@ -576,6 +725,81 @@ export class SessionDAO {
     return {
       ...session,
       total_cost: new Decimal(session.total_cost || 0),
+      thinking_blocks: session.thinking_blocks || [],
+      reasoning_chain: session.reasoning_chain || [],
+      decision_points: session.decision_points || {},
+      confidence_levels: session.confidence_levels || {
+        current: 0,
+        trend: [],
+        min: 0,
+        max: 1
+      },
+    };
+  }
+
+  /**
+   * Transform database message record with robust JSON parsing
+   */
+  private transformMessage(message: any): AgentMessage {
+    const parseJsonSafely = (value: any, fallback: any = []): any => {
+      if (value === null || value === undefined) {
+        return fallback;
+      }
+      
+      if (typeof value === 'string') {
+        try {
+          return JSON.parse(value);
+        } catch (e) {
+          console.warn('Failed to parse JSON, using fallback:', e);
+          return fallback;
+        }
+      }
+      
+      // If it's already parsed (from mock or different source), return as is
+      return value || fallback;
+    };
+
+    return {
+      ...message,
+      tool_calls: parseJsonSafely(message.tool_calls, []),
+      tool_results: parseJsonSafely(message.tool_results, []),
+    };
+  }
+
+  /**
+   * Transform database thinking block record with robust JSON parsing
+   */
+  private transformThinkingBlock(block: any): ThinkingBlock {
+    const parseJsonSafely = (value: any, fallback: any = {}): any => {
+      if (value === null || value === undefined) {
+        return fallback;
+      }
+      
+      if (typeof value === 'string') {
+        try {
+          return JSON.parse(value);
+        } catch (e) {
+          console.warn('Failed to parse JSON, using fallback:', e);
+          return fallback;
+        }
+      }
+      
+      // If it's already parsed (from mock or different source), return as is
+      return value || fallback;
+    };
+
+    return {
+      ...block,
+      context_snapshot: parseJsonSafely(block.context_snapshot, {}),
+    };
+  }
+
+  /**
+   * Transform database summary record
+   */
+  private transformSummary(summary: any): ConversationSummary {
+    return {
+      ...summary,
     };
   }
 }

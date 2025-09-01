@@ -21,7 +21,7 @@ export function createBreatheCommand(): Command {
       "Starting phase: EXPLORE, SUMMON, or COMPLETE",
       "EXPLORE"
     )
-    .option("--max-iterations <num>", "Maximum conversation iterations", "50")
+    .option("--max-iterations <num>", "Maximum conversation iterations", "100")
     .option("--cost-budget <amount>", "Maximum cost budget in USD", "50.0")
     .option("--no-web-search", "Disable web search capability")
     .option(
@@ -200,9 +200,9 @@ function validateInputs(vision: string, options: any): void {
     );
   }
 
-  if (vision.length > 8000) {
+  if (vision.length > 32000) {
     throw new Error(
-      "Vision is too long. Please keep it under 8000 characters."
+      "Vision is too long. Please keep it under 32000 characters."
     );
   }
 

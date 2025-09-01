@@ -6,7 +6,7 @@
 import fs from 'fs';
 import path from 'path';
 import { DatabaseManager } from '../DatabaseManager.js';
-import { adminConfig } from '../../config/database.js';
+import { adminConfig, testConfig, config } from '../../config/database.js';
 
 interface SeedFile {
   filename: string;
@@ -17,6 +17,8 @@ class SeedRunner {
   private db: DatabaseManager;
 
   constructor() {
+    // Configure database connection based on environment
+    const dbConfig = process.env.NODE_ENV === 'test' ? testConfig : config;
     this.db = new DatabaseManager();
   }
 
@@ -33,6 +35,56 @@ class SeedRunner {
       filename,
       content: fs.readFileSync(path.join(seedsDir, filename), 'utf8'),
     }));
+  }
+
+  /**
+   * Split SQL content into executable statements, handling DO blocks correctly
+   */
+  private splitSqlStatements(content: string): string[] {
+    const statements: string[] = [];
+    let currentStatement = '';
+    let inDoBlock = false;
+    let dollarTag = '';
+    
+    const lines = content.split('\n');
+    
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      
+      // Skip empty lines and comments when not in DO block
+      if (!inDoBlock && (!trimmedLine || trimmedLine.startsWith('--'))) {
+        continue;
+      }
+      
+      currentStatement += line + '\n';
+      
+      // Check for DO block start
+      const doMatch = trimmedLine.match(/^DO\s+(\$[^$]*\$)/i);
+      if (doMatch && !inDoBlock) {
+        inDoBlock = true;
+        dollarTag = doMatch[1];
+      }
+      
+      // Check for DO block end
+      if (inDoBlock && trimmedLine.includes(dollarTag) && trimmedLine.endsWith(';')) {
+        inDoBlock = false;
+        statements.push(currentStatement.trim());
+        currentStatement = '';
+        dollarTag = '';
+      }
+      // Check for regular statement end (not in DO block)
+      else if (!inDoBlock && trimmedLine.endsWith(';')) {
+        statements.push(currentStatement.trim());
+        currentStatement = '';
+      }
+    }
+    
+    // Add any remaining statement
+    if (currentStatement.trim()) {
+      statements.push(currentStatement.trim());
+    }
+    
+    return statements.filter(stmt => stmt.length > 0);
   }
 
   /**
@@ -55,14 +107,15 @@ class SeedRunner {
         console.log(`🌱 Executing seed: ${seed.filename}`);
         
         await this.db.transaction(async (transaction) => {
-          // Split seed file into individual statements
-          const statements = seed.content
-            .split(/;\s*$/gm)
-            .map(stmt => stmt.trim())
-            .filter(stmt => stmt && !stmt.startsWith('--') && stmt !== 'DO');
+          // Split seed file into individual statements with proper DO block handling
+          const statements = this.splitSqlStatements(seed.content);
+          
+          console.log(`📝 Found ${statements.length} statement(s) in ${seed.filename}`);
 
-          for (const statement of statements) {
+          for (let i = 0; i < statements.length; i++) {
+            const statement = statements[i];
             if (statement.trim()) {
+              console.log(`⚡ Executing statement ${i+1}/${statements.length}: ${statement.substring(0, 50).replace(/\n/g, ' ')}...`);
               await transaction.query(statement);
             }
           }
@@ -196,8 +249,11 @@ class SeedRunner {
   }
 }
 
-// Main execution if called directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+// CLI execution - check if this file is being executed directly
+// Using process.argv check instead of import.meta for compatibility
+const isMainModule = process.argv[1] && (process.argv[1].endsWith('run.ts') || process.argv[1].endsWith('run.js'));
+
+if (isMainModule && typeof require !== 'undefined') {
   const runner = new SeedRunner();
   
   runner.runSeeds()
